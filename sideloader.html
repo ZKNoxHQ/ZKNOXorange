@@ -1,0 +1,1224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZKNOX | ZKNOX Orange</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Source+Sans+3:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f8f9fa;
+            --bg-tertiary: #f0f2f5;
+            --accent-primary: #7c3aed;
+            --accent-secondary: #a78bfa;
+            --accent-gradient: linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%);
+            --text-primary: #1a1a2e;
+            --text-secondary: #4a5568;
+            --text-muted: #718096;
+            --border-color: #e2e8f0;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+            --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+            --shadow-lg: 0 10px 40px rgba(0, 0, 0, 0.1);
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 16px;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: 'Source Sans 3', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            font-size: 16px;
+        }
+        
+        /* Navigation */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            background: #0a0a0f;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .nav-container {
+            max-width: 1140px;
+            margin: 0 auto;
+            padding: 0 2rem;
+            height: 70px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .logo { display: flex; align-items: center; text-decoration: none; }
+        .logo img { height: 48px; width: auto; }
+        .nav-links { display: flex; align-items: center; gap: 0.25rem; }
+        .nav-link {
+            color: #a78bfa;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            font-size: 0.95rem;
+            font-weight: 500;
+            border-radius: var(--radius-sm);
+            transition: all 0.2s ease;
+        }
+        .nav-link:hover { color: #c4b5fd; background: rgba(167, 139, 250, 0.1); }
+        .nav-dropdown { position: relative; }
+        .nav-dropdown > .nav-link { display: flex; align-items: center; gap: 0.35rem; }
+        .nav-dropdown > .nav-link::after {
+            content: '';
+            width: 0; height: 0;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-top: 4px solid currentColor;
+            transition: transform 0.2s ease;
+        }
+        .nav-dropdown:hover > .nav-link::after { transform: rotate(180deg); }
+        .dropdown-menu {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            min-width: 200px;
+            background: #1a1a25;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: var(--radius-md);
+            padding: 0.5rem;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(10px);
+            transition: all 0.2s ease;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            z-index: 1001;
+        }
+        .nav-dropdown:hover .dropdown-menu { opacity: 1; visibility: visible; transform: translateY(5px); }
+        .dropdown-item {
+            display: block;
+            padding: 0.65rem 1rem;
+            color: #9ca3af;
+            text-decoration: none;
+            font-size: 0.9rem;
+            border-radius: var(--radius-sm);
+            transition: all 0.2s ease;
+        }
+        .dropdown-item:hover { color: #a78bfa; background: rgba(167, 139, 250, 0.1); }
+        .nav-icon { display: flex; align-items: center; justify-content: center; width: 36px; padding: 0; }
+        .nav-icon svg { width: 18px; height: 18px; }
+        .github-btn {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: var(--radius-md);
+            color: #ffffff;
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+        .github-btn:hover { background: rgba(255, 255, 255, 0.1); border-color: #a78bfa; }
+        .github-btn svg { width: 18px; height: 18px; }
+        .mobile-menu-btn { display: none; flex-direction: column; gap: 5px; padding: 0.5rem; background: none; border: none; cursor: pointer; }
+        .mobile-menu-btn span { width: 22px; height: 2px; background: #ffffff; transition: all 0.3s ease; }
+
+        /* Hero Section */
+        .hero {
+            padding: 110px 2rem 40px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+        }
+        .hero-container { max-width: 1140px; margin: 0 auto; display: flex; align-items: center; gap: 3rem; }
+        .hero-image { flex: 0 0 250px; }
+        .hero-image img { width: 100%; height: auto; border-radius: var(--radius-lg); }
+        .hero-content { flex: 1; }
+        .hero h1 { font-size: 2.5rem; font-weight: 700; line-height: 1.2; margin-bottom: 1rem; color: var(--text-primary); }
+        .hero-lead { font-size: 1.15rem; color: var(--text-secondary); line-height: 1.7; }
+        
+        /* Main Container */
+        .container { max-width: 1140px; margin: 0 auto; padding: 0 2rem; }
+        main { padding: 2rem 0 4rem; }
+        
+        /* Section Cards */
+        .section {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            transition: all 0.3s ease;
+        }
+        .section:hover { box-shadow: var(--shadow-md); }
+        .section h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--accent-primary);
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid var(--accent-primary);
+        }
+        .section p { color: var(--text-secondary); margin-bottom: 1rem; }
+        
+        /* Form Elements */
+        label { display: block; margin: 1rem 0 0.25rem; font-weight: 600; color: var(--text-secondary); font-size: 0.9rem; }
+        input, select, textarea {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.9rem;
+            transition: all 0.2s ease;
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+        }
+        .help { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+        
+        /* Buttons */
+        button {
+            background: var(--accent-primary);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            font-size: 0.95rem;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            font-family: inherit;
+            margin: 0.5rem 0.5rem 0.5rem 0;
+        }
+        button:hover { background: #6d28d9; transform: translateY(-1px); box-shadow: var(--shadow-md); }
+        button:disabled { background: var(--bg-tertiary); color: var(--text-muted); cursor: not-allowed; transform: none; box-shadow: none; }
+        button.secondary { background: var(--bg-primary); border: 1px solid var(--border-color); color: var(--text-primary); }
+        button.secondary:hover { border-color: var(--accent-primary); color: var(--accent-primary); }
+        button.danger { background: var(--danger); }
+        button.danger:hover { background: #dc2626; }
+        
+        /* Status */
+        .status { display: inline-block; padding: 0.375rem 0.75rem; border-radius: 100px; font-weight: 600; font-size: 0.85rem; font-family: 'IBM Plex Mono', monospace; }
+        .status.connected { background: var(--success); color: white; }
+        .status.disconnected { background: var(--danger); color: white; }
+        
+        #deviceInfo { background: var(--bg-secondary); padding: 1rem; border-radius: var(--radius-md); margin-top: 1rem; display: none; }
+        
+        /* Progress */
+        .progress { width: 100%; height: 8px; background: var(--bg-tertiary); border-radius: 4px; overflow: hidden; margin: 1rem 0; }
+        .progress-bar { height: 100%; background: var(--accent-gradient); transition: width 0.3s; }
+        
+        #mapInfo {
+            display: none;
+            margin-top: 0.5rem;
+            padding: 0.75rem;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: var(--radius-md);
+            font-size: 0.85rem;
+            font-family: 'IBM Plex Mono', monospace;
+            color: var(--success);
+        }
+        
+        /* Log */
+        #log {
+            background: #0a0a0f;
+            border: 1px solid rgba(167, 139, 250, 0.2);
+            border-radius: var(--radius-lg);
+            padding: 1rem;
+            height: 300px;
+            overflow-y: auto;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+        }
+        .log-info { color: #9ca3af; }
+        .log-success { color: #10b981; }
+        .log-error { color: #ef4444; }
+        .log-warn { color: #f59e0b; }
+        .log-debug { color: #6b7280; }
+        
+        /* Info Banner */
+        .info-banner {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-left: 4px solid var(--warning);
+            padding: 1rem 1.25rem;
+            border-radius: var(--radius-md);
+            margin-bottom: 1.5rem;
+        }
+        .info-banner h3 { margin: 0 0 0.5rem 0; color: var(--warning); font-size: 1rem; }
+        .info-banner p { margin: 0; color: var(--text-secondary); font-size: 0.9rem; }
+        
+        /* Footer */
+        footer {
+            background: #0a0a0f;
+            padding: 2rem;
+            text-align: center;
+            border-top: 1px solid rgba(167, 139, 250, 0.2);
+        }
+        .footer-copy { color: #a78bfa; font-size: 0.9rem; }
+        .footer-copy a { color: #ffffff; text-decoration: none; font-weight: 600; }
+        .footer-copy a:hover { color: #c4b5fd; }
+        
+        input[type="checkbox"] { width: auto; margin-right: 0.5rem; }
+        
+        @media (max-width: 768px) {
+            .hero-container { flex-direction: column; text-align: center; }
+            .hero-image { flex: 0 0 auto; max-width: 200px; }
+            .hero h1 { font-size: 1.75rem; }
+            .nav-links { display: none; position: absolute; top: 70px; left: 0; right: 0; background: #0a0a0f; flex-direction: column; padding: 1rem; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+            .nav-links.active { display: flex; }
+            .nav-link { width: 100%; padding: 0.75rem 1rem; }
+            .dropdown-menu { position: static; opacity: 1; visibility: visible; transform: none; background: transparent; border: none; box-shadow: none; padding-left: 1rem; }
+            .mobile-menu-btn { display: flex; }
+            .github-btn { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav>
+        <div class="nav-container">
+            <a href="https://zknox.com" class="logo"><img src="zknox-logo.png" alt="ZKNOX"></a>
+            
+            <div class="nav-links">
+                <a href="https://zknox.com" class="nav-link">Home</a>
+                
+                <div class="nav-dropdown">
+                    <a href="https://zknox.com/technologies.html" class="nav-link">Technologies</a>
+                    <div class="dropdown-menu">
+                        <a href="https://zknox.com/tech-ecc.html" class="dropdown-item">Elliptic Curves</a>
+                        <a href="https://zknox.com/tech-hw.html" class="dropdown-item">Hardware Wallets</a>
+                        <a href="https://zknox.com/tech-mpc.html" class="dropdown-item">MPC</a>
+                        <a href="https://zknox.com/tech-pqc.html" class="dropdown-item">Post-Quantum Cryptography</a>
+                        <a href="https://zknox.com/tech-zk.html" class="dropdown-item">Zero Knowledge</a>
+                    </div>
+                </div>
+                
+                <div class="nav-dropdown">
+                    <a href="https://zknox.com/products.html" class="nav-link">Products</a>
+                    <div class="dropdown-menu">
+                        <a href="https://zknox.com/products.html#libraries" class="dropdown-item">Cryptographic Libraries</a>
+                        <a href="https://zknox.com/products.html#hardware" class="dropdown-item">Hardware Integration</a>
+                        <a href="https://zknox.com/products.html#contracts" class="dropdown-item">Smart Contracts</a>
+                        <a href="https://zknox.com/products.html#zk" class="dropdown-item">ZK Circuits</a>
+                    </div>
+                </div>
+                
+                <div class="nav-dropdown">
+                    <a href="tools.html" class="nav-link">Tools</a>
+                    <div class="dropdown-menu">
+                        <a href="official-apps.html" class="dropdown-item">ZKNOX Blue</a>
+                        <a href="sideloader.html" class="dropdown-item">ZKNOX Orange</a>
+                        <a href="https://zknox.com/demo-pqbip39.html" class="dropdown-item">PQBIP39</a>
+                        <a href="https://zknox.com/demo-zk-hardware.html" class="dropdown-item">ZK-Hardware</a>
+                    </div>
+                </div>
+                
+                <div class="nav-dropdown">
+                    <a href="https://zknox.com/research.html" class="nav-link">Research</a>
+                    <div class="dropdown-menu">
+                        <a href="https://zknox.com/blog.html" class="dropdown-item">Blog</a>
+                        <a href="https://zknox.com/eips.html" class="dropdown-item">EIPs</a>
+                        <a href="https://zknox.com/hackathons.html" class="dropdown-item">Hackathons</a>
+                        <a href="https://zknox.com/papers.html" class="dropdown-item">Papers</a>
+                        <a href="https://zknox.com/talks.html" class="dropdown-item">Talks</a>
+                    </div>
+                </div>
+                
+                <div class="nav-dropdown">
+                    <a href="https://zknox.com/services.html" class="nav-link">Services</a>
+                    <div class="dropdown-menu">
+                        <a href="https://zknox.com/services.html#audits" class="dropdown-item">Audits</a>
+                        <a href="https://zknox.com/services.html#design" class="dropdown-item">Design</a>
+                        <a href="https://zknox.com/services.html#hardware" class="dropdown-item">Hardware Integration</a>
+                        <a href="https://zknox.com/services.html#implementation" class="dropdown-item">Implementation</a>
+                    </div>
+                </div>
+                
+                <a href="https://zknox.com/team.html" class="nav-link">Team</a>
+                <a href="https://x.com/zknoxHQ" class="nav-link nav-icon" target="_blank" title="X/Twitter">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+                    </svg>
+                </a>
+            </div>
+
+            <a href="https://github.com/ZKNoxHQ" class="github-btn" target="_blank">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                </svg>
+                GitHub
+            </a>
+
+            <button class="mobile-menu-btn" onclick="toggleMenu()">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <header class="hero">
+        <div class="hero-container">
+            <div class="hero-image">
+                <img src="zknox-orange.jpg" alt="ZKNOX Orange">
+            </div>
+            <div class="hero-content">
+                <h1>ZKNOX Orange</h1>
+                <p class="hero-lead">
+                    Load custom applications onto your Ledger device in development mode. 
+                    Perfect for developers building and testing Ledger apps.
+                </p>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="container">
+            <div class="info-banner">
+                <h3>⚠️ Development Mode</h3>
+                <p>This tool is intended for developers testing their own applications.</p>
+            </div>
+    
+            <div class="section">
+                <h2>1. Connect Device</h2>
+                <p>Put your Ledger device in <strong>Dashboard mode</strong> (main menu, no app open)</p>
+                
+                <div style="margin: 1rem 0;">
+                    <label>Device Type</label>
+                    <select id="targetId">
+                        <option value="0x33100004">Nano S Plus</option>
+                        <option value="0x33000004">Nano X</option>
+                        <option value="0x31100004">Nano S (legacy)</option>
+                        <option value="0x33200004">Stax</option>
+                        <option value="0x33300004">Flex</option>
+                    </select>
+                </div>
+                
+                <button id="connectBtn">🔌 Connect Device</button>
+                <button id="disconnectBtn" class="secondary" disabled>Disconnect</button>
+                
+                <div id="deviceInfo">
+                    <strong>Status:</strong> <span id="connectionStatus" class="status disconnected">Disconnected</span>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>2. Application Details</h2>
+                
+                <div class="grid">
+                    <div>
+                        <label>App Name *</label>
+                        <input type="text" id="appName" placeholder="MyApp" value="">
+                        <div class="help">Name shown on device</div>
+                    </div>
+                    <div>
+                        <label>App Version</label>
+                        <input type="text" id="appVersion" placeholder="1.0.0" value="1.0.0">
+                    </div>
+                </div>
+
+                <label>HEX File *</label>
+                <input type="file" id="hexFile" accept=".hex">
+                <div class="help">Intel HEX format (.hex) file from your build</div>
+                
+                <label>Map File (optional - for auto-calculating sizes)</label>
+                <input type="file" id="mapFile" accept=".map">
+                <div class="help">app.map file - automatically computes Data Size and Install Params Size</div>
+                <div id="mapInfo">
+                    <span>✓ Map parsed:</span>
+                    <span id="mapDataSize"></span> |
+                    <span id="mapInstallParams"></span>
+                </div>
+                
+                <label>Or paste HEX content directly:</label>
+                <textarea id="hexContent" rows="6" placeholder=":020000040800F2
+:1000000000200020ED000008...
+:00000001FF"></textarea>
+
+                <div class="grid">
+                    <div>
+                        <label>Curves (comma-separated)</label>
+                        <input type="text" id="curves" placeholder="secp256k1,ed25519" value="secp256k1">
+                        <div class="help">secp256k1, secp256r1, ed25519, bls12381g1</div>
+                    </div>
+                    <div>
+                        <label>BIP32 Paths (comma-separated)</label>
+                        <input type="text" id="paths" placeholder="44'/60'/0'" value="">
+                        <div class="help">e.g., 44'/60'/0' for Ethereum</div>
+                    </div>
+                </div>
+
+                <label>Icon (hex)</label>
+                <input type="text" id="icon" placeholder="Optional - hex encoded icon data">
+
+                <div class="grid">
+                    <div>
+                        <label>Data Size</label>
+                        <input type="number" id="dataSize" value="0" min="0">
+                    </div>
+                    <div>
+                        <label>App Flags</label>
+                        <input type="number" id="appFlags" value="0" min="0">
+                    </div>
+                </div>
+                
+                <div class="grid">
+                    <div>
+                        <label>API Level</label>
+                        <input type="number" id="apiLevel" value="22" min="0">
+                        <div class="help">SDK API level (typically 22 for recent SDKs)</div>
+                    </div>
+                    <div>
+                        <label>Install Params Size</label>
+                        <input type="number" id="installParamsSize" value="0" min="0">
+                        <div class="help">From app.map: _einstall_parameters - _install_parameters</div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 1rem;">
+                    <input type="checkbox" id="deleteFirst" checked>
+                    <label for="deleteFirst" style="display: inline; margin: 0;">Delete existing app first</label>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>3. Load Application</h2>
+                
+                <button id="loadBtn" disabled>📦 Load Application</button>
+                <button id="deleteBtn" class="danger" disabled>🗑️ Delete App</button>
+                <button id="listBtn" class="secondary" disabled>📋 List Apps</button>
+                
+                <div class="progress" id="progressContainer" style="display: none;">
+                    <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>4. Custom CA</h2>
+                <p>Push a custom Certificate Authority to enable sideloading. Device must be in <strong>Recovery Mode</strong>.</p>
+                
+                <div class="info-banner" style="border-left-color: var(--accent-primary); margin: 1rem 0;">
+                    <h3>📱 How to enter Recovery Mode</h3>
+                    <p><strong>Flex:</strong> Turn off → Hold button near USB → Connect USB → Release at "Recovery"</p>
+                    <p><strong>Stax:</strong> Turn off → Hold upper-left corner → Connect USB</p>
+                    <p><strong>Nano S/S+/X:</strong> Hold left button → Connect USB → Release at "Recovery"</p>
+                </div>
+                
+                <button id="scanDevicesBtn" class="secondary">🔍 Scan USB Devices</button>
+                <button id="pushCABtn" class="secondary" disabled>🔑 Push Custom CA</button>
+                <button id="testCABtn" class="secondary" disabled>🧪 Test Custom CA</button>
+                
+                <div class="help" style="margin-top: 0.5rem;">
+                    Uses test CA with private key = 1 (secp256k1 generator point G as public key)
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>Log</h2>
+                <button id="clearLogBtn" class="secondary" style="float: right; padding: 0.5rem 1rem; font-size: 0.85rem;">Clear</button>
+                <div id="log"></div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer>
+        <p class="footer-copy">Copyright © 2025 <a href="https://zknox.com">ZKNOX</a> All rights reserved.</p>
+    </footer>
+
+    <script>
+        function toggleMenu() {
+            document.querySelector('.nav-links').classList.toggle('active');
+        }
+    </script>
+
+    <script type="module">
+        function log(msg, type = 'info') {
+            const logEl = document.getElementById('log');
+            const time = new Date().toLocaleTimeString();
+            logEl.innerHTML += `<span class="log-${type}">[${time}] ${msg}</span>\n`;
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(`[${type}] ${msg}`);
+        }
+        
+        document.getElementById('clearLogBtn').onclick = () => {
+            document.getElementById('log').innerHTML = '';
+        };
+
+        log('Initializing sideloader...', 'info');
+
+        if (!navigator.hid) {
+            log('❌ WebHID not supported! Use Chrome/Edge 89+', 'error');
+            log('WebHID requires HTTPS or localhost', 'warn');
+            document.getElementById('connectBtn').disabled = true;
+        } else {
+            log('✓ WebHID supported', 'success');
+        }
+
+        let TransportWebHID, loadApp, deleteApp, listApps, getMemInfo, IntelHexParser;
+        let modulesLoaded = false;
+        
+        try {
+            log('Loading modules...', 'info');
+            const mod = await import('./dist/ledgerjs.bundle.js');
+            TransportWebHID = mod.TransportWebHID;
+            loadApp = mod.loadApp;
+            deleteApp = mod.deleteApp;
+            listApps = mod.listApps;
+            getMemInfo = mod.getMemInfo;
+            IntelHexParser = mod.IntelHexParser;
+            modulesLoaded = true;
+            log('✓ Modules loaded successfully', 'success');
+            log('Ready - Click "Connect Device" to start', 'info');
+        } catch (e) {
+            log(`❌ Failed to load modules: ${e.message}`, 'error');
+            log('Make sure you are running from a local server (not file://)', 'warn');
+            log('Try: npx serve . OR python3 -m http.server 8080', 'info');
+            console.error('Module load error:', e);
+        }
+
+        let transport = null;
+
+        document.getElementById('connectBtn').onclick = async () => {
+            if (!modulesLoaded) { log('❌ Modules not loaded - cannot connect', 'error'); return; }
+            if (!navigator.hid) { log('❌ WebHID not supported', 'error'); return; }
+            
+            try {
+                log('Requesting device access...', 'info');
+                log('A popup should appear - select your Ledger device', 'info');
+                transport = await TransportWebHID.request(true);
+                log('✓ Device connected!', 'success');
+                
+                document.getElementById('connectionStatus').textContent = 'Connected';
+                document.getElementById('connectionStatus').className = 'status connected';
+                document.getElementById('deviceInfo').style.display = 'block';
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('disconnectBtn').disabled = false;
+                document.getElementById('loadBtn').disabled = false;
+                document.getElementById('deleteBtn').disabled = false;
+                document.getElementById('listBtn').disabled = false;
+                document.getElementById('pushCABtn').disabled = false;
+                document.getElementById('testCABtn').disabled = false;
+            } catch (e) {
+                console.error('Connection error:', e);
+                log(`❌ Connection failed: ${e.message}`, 'error');
+                if (e.message.includes('No Ledger')) { log('Did you select a device in the popup?', 'warn'); }
+            }
+        };
+
+        document.getElementById('disconnectBtn').onclick = async () => {
+            if (transport) { try { await transport.close(); } catch (e) { console.error('Close error:', e); } transport = null; }
+            document.getElementById('connectionStatus').textContent = 'Disconnected';
+            document.getElementById('connectionStatus').className = 'status disconnected';
+            document.getElementById('connectBtn').disabled = false;
+            document.getElementById('disconnectBtn').disabled = true;
+            document.getElementById('loadBtn').disabled = true;
+            document.getElementById('deleteBtn').disabled = true;
+            document.getElementById('listBtn').disabled = true;
+            document.getElementById('pushCABtn').disabled = true;
+            document.getElementById('testCABtn').disabled = true;
+            log('Disconnected', 'info');
+        };
+
+        document.getElementById('loadBtn').onclick = async () => {
+            if (!transport) { log('❌ Please connect device first', 'error'); return; }
+            const appName = document.getElementById('appName').value.trim();
+            if (!appName) { log('❌ App name is required', 'error'); return; }
+
+            let hexContent = document.getElementById('hexContent').value.trim();
+            const hexFileInput = document.getElementById('hexFile');
+            if (hexFileInput.files.length > 0) {
+                hexContent = await hexFileInput.files[0].text();
+                log(`Loaded HEX file: ${hexFileInput.files[0].name}`, 'info');
+            }
+            if (!hexContent) { log('❌ HEX file or content is required', 'error'); return; }
+
+            const targetId = parseInt(document.getElementById('targetId').value);
+            const appVersion = document.getElementById('appVersion').value.trim() || null;
+            const curvesStr = document.getElementById('curves').value.trim();
+            const curves = curvesStr ? curvesStr.split(',').map(c => c.trim()).filter(c => c) : null;
+            const pathsStr = document.getElementById('paths').value.trim();
+            const paths = pathsStr ? pathsStr.split(',').map(p => p.trim()).filter(p => p) : null;
+            const icon = document.getElementById('icon').value.trim() || null;
+            const dataSize = parseInt(document.getElementById('dataSize').value) || 0;
+            const appFlags = parseInt(document.getElementById('appFlags').value) || 0;
+            const apiLevel = parseInt(document.getElementById('apiLevel').value) || 22;
+            const installParamsSize = parseInt(document.getElementById('installParamsSize').value) || 0;
+            const deleteFirst = document.getElementById('deleteFirst').checked;
+
+            document.getElementById('progressContainer').style.display = 'block';
+            document.getElementById('progressBar').style.width = '10%';
+            document.getElementById('loadBtn').disabled = true;
+
+            try {
+                log(`Target: 0x${targetId.toString(16)}`, 'debug');
+                log(`App: ${appName} v${appVersion || '?'}`, 'info');
+                if (curves) log(`Curves: ${curves.join(', ')}`, 'debug');
+                if (paths) log(`Paths: ${paths.join(', ')}`, 'debug');
+                
+                const parser = new IntelHexParser(hexContent);
+                const areas = parser.getAreas();
+                const bootAddr = parser.getBootAddr();
+                const codeSize = parser.maxAddr() - parser.minAddr();
+                log(`HEX: ${areas.length} area(s), ${codeSize} bytes, boot=0x${bootAddr.toString(16)}`, 'info');
+                document.getElementById('progressBar').style.width = '20%';
+                
+                log('Establishing secure channel...', 'info');
+                document.getElementById('progressBar').style.width = '30%';
+
+                const hash = await loadApp(transport, {
+                    targetId,
+                    targetVersion: '',
+                    fileName: hexContent,
+                    appName,
+                    appVersion,
+                    curves,
+                    paths,
+                    icon,
+                    dataSize: dataSize > 0 ? dataSize : null,
+                    installParamsSize: installParamsSize > 0 ? installParamsSize : null,
+                    appFlags,
+                    apiLevel,
+                    delete: deleteFirst,
+                    debug: true
+                });
+
+                document.getElementById('progressBar').style.width = '100%';
+                log(`✅ Application loaded successfully!`, 'success');
+                log(`App hash: ${hash}`, 'success');
+            } catch (e) {
+                log(`❌ Load failed: ${e.message}`, 'error');
+                console.error('Load error:', e);
+            } finally {
+                document.getElementById('loadBtn').disabled = false;
+                setTimeout(() => {
+                    document.getElementById('progressContainer').style.display = 'none';
+                    document.getElementById('progressBar').style.width = '0%';
+                }, 2000);
+            }
+        };
+
+        document.getElementById('deleteBtn').onclick = async () => {
+            if (!transport) { log('❌ Please connect device first', 'error'); return; }
+            const appName = document.getElementById('appName').value.trim();
+            if (!appName) { log('❌ App name is required', 'error'); return; }
+            const targetId = parseInt(document.getElementById('targetId').value);
+            if (!confirm(`Delete "${appName}" from device?`)) { return; }
+            try {
+                log(`Deleting ${appName}...`, 'info');
+                await deleteApp(transport, appName, targetId, null, true);
+                log(`✅ App "${appName}" deleted`, 'success');
+            } catch (e) {
+                log(`❌ Delete failed: ${e.message}`, 'error');
+                console.error('Delete error:', e);
+            }
+        };
+
+        document.getElementById('listBtn').onclick = async () => {
+            if (!transport) { log('❌ Please connect device first', 'error'); return; }
+            const targetId = parseInt(document.getElementById('targetId').value);
+            try {
+                log('Listing installed apps...', 'info');
+                const apps = await listApps(transport, targetId);
+                if (!apps || apps.length === 0) {
+                    log('No apps installed (or unable to list)', 'info');
+                } else {
+                    log(`Found ${apps.length} app(s):`, 'success');
+                    for (const app of apps) { log(`  - ${app.name || app}`, 'info'); }
+                }
+            } catch (e) {
+                log(`❌ List failed: ${e.message}`, 'error');
+                console.error('List error:', e);
+            }
+        };
+
+        // Scan USB devices to find Ledger (including recovery mode)
+        document.getElementById('scanDevicesBtn').onclick = async () => {
+            log('Scanning for USB devices...', 'info');
+            
+            try {
+                // First check already paired devices
+                const pairedDevices = await navigator.hid.getDevices();
+                log(`Found ${pairedDevices.length} paired HID device(s)`, 'info');
+                
+                for (const dev of pairedDevices) {
+                    const pid = dev.productId.toString(16).padStart(4, '0');
+                    const vid = dev.vendorId.toString(16).padStart(4, '0');
+                    log(`  Paired: ${dev.productName} (VID:${vid} PID:${pid})`, 'debug');
+                    
+                    if (dev.vendorId === 0x2c97) {
+                        // Ledger device - check if bootloader/recovery
+                        const isRecovery = (dev.productId & 0x000F) === 0x0000;
+                        if (isRecovery) {
+                            log(`  ⚠️ This appears to be a RECOVERY MODE device!`, 'success');
+                        }
+                    }
+                }
+                
+                // Request new device - this will show picker
+                log('Opening device picker (select your Ledger)...', 'info');
+                const devices = await navigator.hid.requestDevice({
+                    filters: [{ vendorId: 0x2c97 }]  // Ledger vendor ID
+                });
+                
+                if (devices.length === 0) {
+                    log('No device selected', 'warn');
+                    return;
+                }
+                
+                for (const dev of devices) {
+                    const pid = dev.productId.toString(16).padStart(4, '0');
+                    const vid = dev.vendorId.toString(16).padStart(4, '0');
+                    log(`Selected: ${dev.productName} (VID:${vid} PID:${pid})`, 'success');
+                    
+                    // Decode product ID
+                    // Pattern: 0xMM0N where MM = model, N = interface (0 = bootloader, 1+ = app)
+                    const model = (dev.productId >> 8) & 0xFF;
+                    const iface = dev.productId & 0x00FF;
+                    
+                    const modelNames = {
+                        0x00: 'Nano S (old)',
+                        0x10: 'Nano S',
+                        0x40: 'Nano X',
+                        0x50: 'Nano S Plus',
+                        0x60: 'Stax',
+                        0x70: 'Flex'
+                    };
+                    
+                    const modelName = modelNames[model] || `Unknown (0x${model.toString(16)})`;
+                    const isRecovery = iface === 0x00;
+                    
+                    log(`  Model: ${modelName}`, 'info');
+                    log(`  Interface: 0x${iface.toString(16)} ${isRecovery ? '(BOOTLOADER/RECOVERY)' : '(Application)'}`, isRecovery ? 'success' : 'info');
+                    
+                    if (dev.collections) {
+                        for (const col of dev.collections) {
+                            log(`  Collection: usagePage=0x${col.usagePage.toString(16)}, usage=0x${col.usage.toString(16)}`, 'debug');
+                        }
+                    }
+                    
+                    if (isRecovery) {
+                        log('✅ Device is in Recovery Mode - you can push Custom CA!', 'success');
+                        // Store for later use
+                        window.recoveryDevice = dev;
+                        document.getElementById('pushCABtn').disabled = false;
+                        document.getElementById('testCABtn').disabled = false;
+                    } else {
+                        log('❌ Device is NOT in Recovery Mode', 'warn');
+                        log('Reboot device while holding button to enter Recovery Mode', 'info');
+                        // Can still test CA on non-recovery device
+                        window.recoveryDevice = dev;
+                        document.getElementById('testCABtn').disabled = false;
+                    }
+                }
+                
+            } catch (e) {
+                log(`Scan error: ${e.message}`, 'error');
+                console.error('Scan error:', e);
+            }
+        };
+
+        // Push Custom CA handler
+        document.getElementById('pushCABtn').onclick = async () => {
+            // Can use either the main transport or the recovery device
+            let targetTransport = transport;
+            let needsClose = false;
+            
+            if (!targetTransport && window.recoveryDevice) {
+                // Use recovery device found by scan
+                log('Using recovery mode device from scan...', 'info');
+                try {
+                    if (!window.recoveryDevice.opened) {
+                        await window.recoveryDevice.open();
+                    }
+                    targetTransport = {
+                        device: window.recoveryDevice,
+                        exchange: async (apdu) => {
+                            // Simple HID exchange for recovery mode
+                            const dev = window.recoveryDevice;
+                            
+                            // Wrap APDU in HID frame
+                            const channel = 0x0101;
+                            const tag = 0x05;
+                            let offset = 0;
+                            let seq = 0;
+                            
+                            // Send packets
+                            while (offset < apdu.length) {
+                                const packet = new Uint8Array(64);
+                                packet[0] = (channel >> 8) & 0xff;
+                                packet[1] = channel & 0xff;
+                                packet[2] = tag;
+                                
+                                let headerLen;
+                                if (seq === 0) {
+                                    packet[3] = (seq >> 8) & 0xff;
+                                    packet[4] = seq & 0xff;
+                                    packet[5] = (apdu.length >> 8) & 0xff;
+                                    packet[6] = apdu.length & 0xff;
+                                    headerLen = 7;
+                                } else {
+                                    packet[3] = (seq >> 8) & 0xff;
+                                    packet[4] = seq & 0xff;
+                                    headerLen = 5;
+                                }
+                                
+                                const chunkSize = Math.min(apdu.length - offset, 64 - headerLen);
+                                packet.set(apdu.slice(offset, offset + chunkSize), headerLen);
+                                offset += chunkSize;
+                                seq++;
+                                
+                                await dev.sendReport(0, packet);
+                            }
+                            
+                            // Receive response
+                            let response = new Uint8Array(0);
+                            let expectedLen = 0;
+                            seq = 0;
+                            
+                            while (true) {
+                                const result = await new Promise((resolve, reject) => {
+                                    const timeout = setTimeout(() => reject(new Error('Timeout')), 30000);
+                                    const handler = (event) => {
+                                        clearTimeout(timeout);
+                                        dev.removeEventListener('inputreport', handler);
+                                        resolve(new Uint8Array(event.data.buffer));
+                                    };
+                                    dev.addEventListener('inputreport', handler);
+                                });
+                                
+                                let dataOffset;
+                                if (seq === 0) {
+                                    expectedLen = (result[5] << 8) | result[6];
+                                    dataOffset = 7;
+                                } else {
+                                    dataOffset = 5;
+                                }
+                                
+                                const chunk = result.slice(dataOffset);
+                                const newResponse = new Uint8Array(response.length + chunk.length);
+                                newResponse.set(response);
+                                newResponse.set(chunk, response.length);
+                                response = newResponse;
+                                seq++;
+                                
+                                if (response.length >= expectedLen) {
+                                    const data = response.slice(0, expectedLen);
+                                    // Check SW (last 2 bytes)
+                                    if (data.length >= 2) {
+                                        const sw = (data[data.length - 2] << 8) | data[data.length - 1];
+                                        if (sw !== 0x9000 && (sw & 0xff00) !== 0x6100 && (sw & 0xff00) !== 0x6c00) {
+                                            throw new Error(`Invalid status ${sw.toString(16).padStart(4, '0')}`);
+                                        }
+                                    }
+                                    return data;
+                                }
+                            }
+                        }
+                    };
+                    needsClose = true;
+                } catch (e) {
+                    log(`Failed to open recovery device: ${e.message}`, 'error');
+                    return;
+                }
+            }
+            
+            if (!targetTransport) { 
+                log('❌ Please connect device first or scan for recovery mode device', 'error'); 
+                return; 
+            }
+            
+            try {
+                log('Setting up Custom CA via SCP...', 'info');
+                
+                // Import needed modules
+                const mod = await import('./dist/ledgerjs.bundle.js');
+                const { getDeployedSecretV2, HexLoader } = mod;
+                
+                // Target ID for Flex
+                const targetId = 0x33300004;
+                
+                log(`Establishing SCP with Flex (targetId: 0x${targetId.toString(16)})...`, 'info');
+                
+                // On a fresh device in recovery mode, we need to use a random key
+                // The device will accept any well-formed certificate chain
+                // After setupCustomCA, subsequent sessions will require the custom CA
+                let secret;
+                
+                // First try with a random key (for fresh devices)
+                log('Using random key for initial SCP (fresh device mode)...', 'info');
+                const randomKey = new Uint8Array(32);
+                crypto.getRandomValues(randomKey);
+                
+                try {
+                    secret = await getDeployedSecretV2(targetTransport, randomKey, targetId);
+                    log('SCP session established with random key', 'success');
+                } catch (e1) {
+                    log(`Random key SCP failed: ${e1.message}`, 'warn');
+                    
+                    // Try with key=1 in case custom CA is already installed
+                    log('Trying with private key = 1...', 'info');
+                    const rootPrivateKey = new Uint8Array(32);
+                    rootPrivateKey[31] = 0x01;
+                    
+                    try {
+                        secret = await getDeployedSecretV2(targetTransport, rootPrivateKey, targetId);
+                        log('SCP session established with key=1 (custom CA already present)', 'success');
+                    } catch (e2) {
+                        log(`Key=1 SCP also failed: ${e2.message}`, 'error');
+                        throw new Error('Cannot establish SCP - device may need factory reset');
+                    }
+                }
+                
+                // Create HexLoader with the secret
+                const loader = new HexLoader(targetTransport, 0xE0, true, secret);
+                
+                // secp256k1 generator point G (public key for private key = 1)
+                const customCAPublicKey = new Uint8Array([
+                    0x04,
+                    0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+                    0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07,
+                    0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+                    0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98,
+                    0x48, 0x3A, 0xDA, 0x77, 0x26, 0xA3, 0xC4, 0x65,
+                    0x5D, 0xA4, 0xFB, 0xFC, 0x0E, 0x11, 0x08, 0xA8,
+                    0xFD, 0x17, 0xB4, 0x48, 0xA6, 0x85, 0x54, 0x19,
+                    0x9C, 0x47, 0xD0, 0x8F, 0xFB, 0x10, 0xD4, 0xB8
+                ]);
+                
+                log('Sending setupCustomCA command...', 'info');
+                log(`CA Name: "dev"`, 'debug');
+                log(`CA Public Key: 04${Array.from(customCAPublicKey.slice(1)).map(b => b.toString(16).padStart(2, '0')).join('')}`, 'debug');
+                
+                await loader.setupCustomCA('dev', customCAPublicKey);
+                
+                log('✅ Custom CA "dev" pushed successfully!', 'success');
+                log('Public key: G (secp256k1 generator, private key = 1)', 'success');
+                log('You can now sideload apps signed with private key = 1', 'success');
+                log('Reboot device to normal mode and test with "Test Custom CA" button', 'info');
+                
+                if (needsClose && window.recoveryDevice && window.recoveryDevice.opened) {
+                    await window.recoveryDevice.close();
+                }
+                
+            } catch (e) {
+                log(`❌ Push CA failed: ${e.message}`, 'error');
+                console.error('Push CA error:', e);
+                
+                // Cleanup recovery device
+                if (needsClose && window.recoveryDevice && window.recoveryDevice.opened) {
+                    try { await window.recoveryDevice.close(); } catch (ce) {}
+                }
+            }
+        };
+
+        // Test Custom CA handler - checks if custom CA is installed by trying SCP with key=1
+        document.getElementById('testCABtn').onclick = async () => {
+            // Can use either the main transport or the recovery/scanned device
+            let targetTransport = transport;
+            let needsClose = false;
+            
+            if (!targetTransport && window.recoveryDevice) {
+                log('Using scanned device for test...', 'info');
+                try {
+                    if (!window.recoveryDevice.opened) {
+                        await window.recoveryDevice.open();
+                    }
+                    targetTransport = {
+                        device: window.recoveryDevice,
+                        exchange: async (apdu) => {
+                            const dev = window.recoveryDevice;
+                            const channel = 0x0101;
+                            const tag = 0x05;
+                            let offset = 0;
+                            let seq = 0;
+                            
+                            while (offset < apdu.length) {
+                                const packet = new Uint8Array(64);
+                                packet[0] = (channel >> 8) & 0xff;
+                                packet[1] = channel & 0xff;
+                                packet[2] = tag;
+                                
+                                let headerLen;
+                                if (seq === 0) {
+                                    packet[3] = (seq >> 8) & 0xff;
+                                    packet[4] = seq & 0xff;
+                                    packet[5] = (apdu.length >> 8) & 0xff;
+                                    packet[6] = apdu.length & 0xff;
+                                    headerLen = 7;
+                                } else {
+                                    packet[3] = (seq >> 8) & 0xff;
+                                    packet[4] = seq & 0xff;
+                                    headerLen = 5;
+                                }
+                                
+                                const chunkSize = Math.min(apdu.length - offset, 64 - headerLen);
+                                packet.set(apdu.slice(offset, offset + chunkSize), headerLen);
+                                offset += chunkSize;
+                                seq++;
+                                
+                                await dev.sendReport(0, packet);
+                            }
+                            
+                            let response = new Uint8Array(0);
+                            let expectedLen = 0;
+                            seq = 0;
+                            
+                            while (true) {
+                                const result = await new Promise((resolve, reject) => {
+                                    const timeout = setTimeout(() => reject(new Error('Timeout')), 30000);
+                                    const handler = (event) => {
+                                        clearTimeout(timeout);
+                                        dev.removeEventListener('inputreport', handler);
+                                        resolve(new Uint8Array(event.data.buffer));
+                                    };
+                                    dev.addEventListener('inputreport', handler);
+                                });
+                                
+                                let dataOffset;
+                                if (seq === 0) {
+                                    expectedLen = (result[5] << 8) | result[6];
+                                    dataOffset = 7;
+                                } else {
+                                    dataOffset = 5;
+                                }
+                                
+                                const chunk = result.slice(dataOffset);
+                                const newResponse = new Uint8Array(response.length + chunk.length);
+                                newResponse.set(response);
+                                newResponse.set(chunk, response.length);
+                                response = newResponse;
+                                seq++;
+                                
+                                if (response.length >= expectedLen) {
+                                    const data = response.slice(0, expectedLen);
+                                    // Check SW (last 2 bytes)
+                                    if (data.length >= 2) {
+                                        const sw = (data[data.length - 2] << 8) | data[data.length - 1];
+                                        if (sw !== 0x9000 && (sw & 0xff00) !== 0x6100 && (sw & 0xff00) !== 0x6c00) {
+                                            throw new Error(`Invalid status ${sw.toString(16).padStart(4, '0')}`);
+                                        }
+                                    }
+                                    return data;
+                                }
+                            }
+                        }
+                    };
+                    needsClose = true;
+                } catch (e) {
+                    log(`Failed to open device: ${e.message}`, 'error');
+                    return;
+                }
+            }
+            
+            if (!targetTransport) { 
+                log('❌ Please connect device first or scan for device', 'error'); 
+                return; 
+            }
+            
+            try {
+                log('Testing Custom CA (trying SCP with private key = 1)...', 'info');
+                
+                const mod = await import('./dist/ledgerjs.bundle.js');
+                const { getDeployedSecretV2 } = mod;
+                
+                // Target ID for Flex
+                const targetId = 0x33300004;
+                
+                // Root private key = 1
+                const rootPrivateKey = new Uint8Array(32);
+                rootPrivateKey[31] = 0x01;
+                
+                log(`Attempting SCP handshake with Flex (targetId: 0x${targetId.toString(16)})...`, 'info');
+                log('Using private key = 1 (expects Custom CA = G)...', 'info');
+                
+                const secret = await getDeployedSecretV2(targetTransport, rootPrivateKey, targetId);
+                
+                log('✅ SCP handshake SUCCESSFUL!', 'success');
+                log('Custom CA is installed and working!', 'success');
+                log(`Session secret: ${Array.from(secret.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')}...`, 'debug');
+                
+                if (needsClose && window.recoveryDevice && window.recoveryDevice.opened) {
+                    await window.recoveryDevice.close();
+                }
+                
+            } catch (e) {
+                log(`❌ SCP handshake FAILED: ${e.message}`, 'error');
+                console.error('Test CA error:', e);
+                
+                if (e.message.includes('Broken certificate chain')) {
+                    log('Custom CA is NOT installed or uses different key', 'warn');
+                    log('The device does not trust private key = 1', 'warn');
+                } else if (e.message.includes('6985') || e.message.includes('6982')) {
+                    log('Security condition not satisfied', 'warn');
+                } else if (e.message.includes('6511')) {
+                    log('Device not in correct mode for SCP', 'warn');
+                }
+                
+                if (needsClose && window.recoveryDevice && window.recoveryDevice.opened) {
+                    try { await window.recoveryDevice.close(); } catch (ce) {}
+                }
+            }
+        };
+
+        document.getElementById('mapFile').onchange = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            try {
+                const content = await file.text();
+                const symbols = parseMapFile(content);
+                let dataSize = 0;
+                if (symbols._envram_data !== undefined && symbols._nvram_data !== undefined) {
+                    dataSize = symbols._envram_data - symbols._nvram_data;
+                }
+                let installParamsSize = 0;
+                if (symbols._einstall_parameters !== undefined && symbols._install_parameters !== undefined) {
+                    installParamsSize = symbols._einstall_parameters - symbols._install_parameters;
+                }
+                document.getElementById('dataSize').value = dataSize;
+                document.getElementById('installParamsSize').value = installParamsSize;
+                document.getElementById('mapDataSize').textContent = `Data Size: ${dataSize}`;
+                document.getElementById('mapInstallParams').textContent = `Install Params: ${installParamsSize}`;
+                document.getElementById('mapInfo').style.display = 'block';
+                log(`Map file parsed: dataSize=${dataSize}, installParamsSize=${installParamsSize}`, 'success');
+            } catch (err) {
+                log(`❌ Failed to parse map file: ${err.message}`, 'error');
+                console.error('Map parse error:', err);
+            }
+        };
+        
+        function parseMapFile(content) {
+            const symbols = {};
+            const lines = content.split('\n');
+            for (const line of lines) {
+                const match = line.match(/^([0-9a-fA-F]+)\s+[0-9a-fA-F]+\s+.*\s+(_\w+)\s*=\s*\./);
+                if (match) {
+                    const addr = parseInt(match[1], 16);
+                    const name = match[2];
+                    symbols[name] = addr;
+                }
+            }
+            return symbols;
+        }
+
+        console.log('Sideloader initialized');
+    </script>
+</body>
+</html>

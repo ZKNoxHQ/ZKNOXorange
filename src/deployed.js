@@ -6,146 +6,94 @@
  */
 
 import { PrivateKey, PublicKey, bytesToHex, hexToBytes } from './ecWrapper.js';
-import { randomBytes } from '@noble/hashes/utils';
+import { randomBytes } from '@noble/hashes/utils.js';
 
-/**
- * Establish SCP V1 session (legacy, pre Nano S 1.4)
- * @param {object} dongle - Transport object with exchange() method
- * @param {Uint8Array} masterPrivate - Master private key (32 bytes)
- * @param {number} targetId - Device target ID
- * @returns {Promise<Uint8Array>} - Session key (16 bytes)
- */
-export async function getDeployedSecretV1(dongle, masterPrivate, targetId) {
-    const testMaster = new PrivateKey(masterPrivate);
-    const testMasterPublic = testMaster.pubkey.serialize(false);
-    const targetIdBytes = uint32ToBytes(targetId);
-
-    if ((targetId & 0xf) !== 0x1) {
-        throw new Error('Target ID does not support SCP V1');
-    }
-
-    // Identify device
-    let apdu = new Uint8Array([0xe0, 0x04, 0x00, 0x00, targetIdBytes.length, ...targetIdBytes]);
-    await dongle.exchange(apdu);
-
-    // Walk the chain
-    const batchInfo = await dongle.exchange(hexToBytes('e050000000'));
-    const cardKeyLen = batchInfo[4];
-    const cardKey = batchInfo.slice(5, 5 + cardKeyLen);
-
-    // Generate ephemeral key pair
-    const ephemeralPrivate = new PrivateKey();
-    const ephemeralPublic = ephemeralPrivate.pubkey.serialize(false);
-    console.log('Using ephemeral key ' + bytesToHex(ephemeralPublic));
-
-    // Sign ephemeral public key with master key
-    const signature = testMaster.ecdsaSign(ephemeralPublic);
-    const signatureDer = testMaster.ecdsaSerialize(signature);
-
-    // Build certificate
-    const certificate = new Uint8Array([
-        ephemeralPublic.length,
-        ...ephemeralPublic,
-        signatureDer.length,
-        ...signatureDer
-    ]);
-
-    apdu = new Uint8Array([0xe0, 0x51, 0x00, 0x00, certificate.length, ...certificate]);
-    await dongle.exchange(apdu);
-
-    // Walk device certificates to get public key for authentication
-    let lastPubKey = new PublicKey(testMasterPublic, true);
-    let index = 0;
-
-    while (true) {
-        const certResponse = await dongle.exchange(hexToBytes('e052000000'));
-        if (certResponse.length === 0) {
-            break;
-        }
-
-        const certPublicLen = certResponse[0];
-        const certPublic = certResponse.slice(1, 1 + certPublicLen);
-        const certSigStart = 2 + certPublicLen;
-        const certSignature = certResponse.slice(certSigStart);
-
-        const certSig = lastPubKey.ecdsaDeserialize(certSignature);
-
-        if (!lastPubKey.ecdsaVerify(certPublic, certSig)) {
-            if (index === 0) {
-                console.log('Broken certificate chain - loading from user key');
-            } else {
-                throw new Error('Broken certificate chain');
-            }
-        }
-
-        lastPubKey = new PublicKey(certPublic, true);
-        index++;
-    }
-
-    // Commit ECDH channel
-    await dongle.exchange(hexToBytes('e053000000'));
-
-    // Compute shared secret
-    const ephemeralPrivBytes = hexToBytes(ephemeralPrivate.serialize());
-    const secret = lastPubKey.ecdh(ephemeralPrivBytes);
-
-    return secret.slice(0, 16);
+function uint32ToBytes(val) {
+    return new Uint8Array([(val >> 24) & 0xff, (val >> 16) & 0xff, (val >> 8) & 0xff, val & 0xff]);
 }
 
 /**
  * Establish SCP V2/V3 session (Nano S 1.4+, all modern devices)
- * @param {object} dongle - Transport object with exchange() method
+ * 
+ * Protocol flow:
+ *   E004 IDENTIFY → E050 GET_NONCE → E051 VALIDATE_CERT (master) →
+ *   E051 VALIDATE_CERT (ephemeral, P1=0x80) → E052 GET_CERT ×2 → E053 COMMIT
+ * 
+ * @param {object} dongle - Transport object with exchange/exchangeRaw methods
  * @param {Uint8Array} masterPrivate - Master private key (32 bytes)
- * @param {number} targetId - Device target ID
+ * @param {number} targetId - Target device ID (e.g. 0x33100004)
  * @param {Array|null} signerCertChain - Optional signer certificate chain
  * @param {number|null} ecdhSecretFormat - Force specific ECDH format
- * @returns {Promise<Uint8Array|object>} - Session key or object with ecdh_secret and devicePublicKey
  */
 export async function getDeployedSecretV2(dongle, masterPrivate, targetId, signerCertChain = null, ecdhSecretFormat = null) {
     const testMaster = new PrivateKey(masterPrivate);
-    const testMasterPublic = testMaster.pubkey.serialize(false);
+    const testMasterPublic = testMaster.pubkey.serialize(false); // 65 bytes uncompressed
     const targetIdBytes = uint32ToBytes(targetId);
 
     if ((targetId & 0xf) < 2) {
-        throw new Error('Target ID does not support SCP V2');
+        throw new Error('Target ID does not support SCP V2+');
     }
 
-    // Identify device
-    console.log('SCP: Sending IDENTIFY (E004)');
-    let apdu = new Uint8Array([0xe0, 0x04, 0x00, 0x00, targetIdBytes.length, ...targetIdBytes]);
-    console.log('SCP: APDU =', bytesToHex(apdu));
-    let response = await dongle.exchange(apdu);
-    console.log('SCP: Response =', bytesToHex(response));
+    // --- Helper: exchange returning {data, sw} without throwing ---
+    async function rawExchange(apdu) {
+        if (typeof dongle.exchangeRaw === 'function') {
+            return await dongle.exchangeRaw(apdu);
+        }
+        try {
+            const data = await dongle.exchange(apdu);
+            return { data, sw: 0x9000 };
+        } catch (e) {
+            if (e.sw) return { data: e.data || new Uint8Array(0), sw: e.sw };
+            throw e;
+        }
+    }
 
-    // Walk the chain with nonce exchange
+    // --- Step 1: IDENTIFY ---
+    // Python: apdu = bytearray([0xe0, 0x04, 0x00, 0x00]) + bytearray([len(targetid)]) + targetid
+    console.log(`SCP: IDENTIFY targetId=0x${targetId.toString(16)}`);
+    let apdu = new Uint8Array([0xe0, 0x04, 0x00, 0x00, targetIdBytes.length, ...targetIdBytes]);
+    let result = await rawExchange(apdu);
+    if (result.sw !== 0x9000) {
+        console.warn(`SCP: IDENTIFY SW=0x${result.sw.toString(16)}`);
+    }
+
+    // --- Step 2: GET_NONCE ---
+    // Python: apdu = bytearray([0xe0, 0x50, 0x00, 0x00]) + bytearray([len(nonce)]) + nonce
     const nonce = randomBytes(8);
-    console.log('SCP: Sending GET_NONCE (E050) with nonce =', bytesToHex(nonce));
     apdu = new Uint8Array([0xe0, 0x50, 0x00, 0x00, nonce.length, ...nonce]);
-    console.log('SCP: APDU =', bytesToHex(apdu));
-    const authInfo = await dongle.exchange(apdu);
-    console.log('SCP: Response (authInfo) =', bytesToHex(authInfo));
+    result = await rawExchange(apdu);
+    
+    if (result.sw !== 0x9000) {
+        throw new Error(`SCP: GET_NONCE failed SW=0x${result.sw.toString(16)}`);
+    }
+    
+    const authInfo = result.data;
+    if (authInfo.length < 12) {
+        throw new Error(`SCP: GET_NONCE insufficient data: ${authInfo.length} bytes (need 12+)`);
+    }
     
     const batchSignerSerial = authInfo.slice(0, 4);
     const deviceNonce = authInfo.slice(4, 12);
-    console.log('SCP: batchSignerSerial =', bytesToHex(batchSignerSerial));
-    console.log('SCP: deviceNonce =', bytesToHex(deviceNonce));
+    console.log(`SCP: GET_NONCE ok, batchSigner=${bytesToHex(batchSignerSerial)}, nonce=${bytesToHex(nonce)}, deviceNonce=${bytesToHex(deviceNonce)}`);
 
-    // Send signer certificate(s)
+    // --- Step 3: VALIDATE_CERT (master certificate) ---
+    // Python: apdu = bytearray([0xE0, 0x51, 0x00, 0x00]) + bytearray([len(certificate)]) + certificate
     if (signerCertChain) {
         for (const cert of signerCertChain) {
             apdu = new Uint8Array([0xe0, 0x51, 0x00, 0x00, cert.length, ...cert]);
-            await dongle.exchange(apdu);
+            result = await rawExchange(apdu);
+            if (result.sw !== 0x9000) {
+                console.warn(`SCP: Signer cert SW=0x${result.sw.toString(16)}`);
+            }
         }
     } else {
-        console.log('SCP: Using test master key =', bytesToHex(testMasterPublic));
+        console.log('SCP: Using test master key (self-signed)');
 
-        // Self-signed master certificate
-        // Data to sign: 0x01 || masterPublicKey
+        // Self-signed master certificate: sign(sha256(0x01 || masterPublic))
         const dataToSign = new Uint8Array([0x01, ...testMasterPublic]);
-        console.log('SCP: Master cert data to sign =', bytesToHex(dataToSign));
         const signature = testMaster.ecdsaSign(dataToSign);
         const signatureDer = testMaster.ecdsaSerialize(signature);
-        console.log('SCP: Master cert signature (DER) =', bytesToHex(signatureDer));
+        console.log(`SCP: Master cert: pubLen=${testMasterPublic.length}, sigLen=${signatureDer.length}, sigDer=${bytesToHex(signatureDer.slice(0, 6))}...`);
 
         const certificate = new Uint8Array([
             testMasterPublic.length,
@@ -153,31 +101,28 @@ export async function getDeployedSecretV2(dongle, masterPrivate, targetId, signe
             signatureDer.length,
             ...signatureDer
         ]);
-        console.log('SCP: Master certificate =', bytesToHex(certificate));
 
-        console.log('SCP: Sending VALIDATE_CERT (E051) for master cert');
         apdu = new Uint8Array([0xe0, 0x51, 0x00, 0x00, certificate.length, ...certificate]);
-        console.log('SCP: APDU =', bytesToHex(apdu));
-        response = await dongle.exchange(apdu);
-        console.log('SCP: Response =', bytesToHex(response));
+        console.log(`SCP: VALIDATE_CERT master APDU len=${apdu.length}, cert len=${certificate.length}`);
+        result = await rawExchange(apdu);
+        
+        if (result.sw !== 0x9000) {
+            console.warn(`SCP: Master cert SW=0x${result.sw.toString(16)} (continuing - sideload mode)`);
+        } else {
+            console.log('SCP: Master cert accepted');
+        }
     }
 
-    // Generate and send ephemeral key certificate
+    // --- Step 4: VALIDATE_CERT (ephemeral certificate, P1=0x80) ---
+    // Python: apdu = bytearray([0xE0, 0x51, 0x80, 0x00]) + bytearray([len(certificate)]) + certificate
     const ephemeralPrivate = new PrivateKey();
     const ephemeralPublic = ephemeralPrivate.pubkey.serialize(false);
-    console.log('SCP: Using ephemeral key =', bytesToHex(ephemeralPublic));
+    console.log(`SCP: Ephemeral pub=${bytesToHex(ephemeralPublic).slice(0, 16)}...`);
 
-    // Data to sign: 0x11 || nonce || deviceNonce || ephemeralPublic
-    const ephDataToSign = new Uint8Array([
-        0x11,
-        ...nonce,
-        ...deviceNonce,
-        ...ephemeralPublic
-    ]);
-    console.log('SCP: Ephemeral cert data to sign =', bytesToHex(ephDataToSign));
+    // Sign: 0x11 || nonce || deviceNonce || ephemeralPublic
+    const ephDataToSign = new Uint8Array([0x11, ...nonce, ...deviceNonce, ...ephemeralPublic]);
     const ephSignature = testMaster.ecdsaSign(ephDataToSign);
     const ephSignatureDer = testMaster.ecdsaSerialize(ephSignature);
-    console.log('SCP: Ephemeral cert signature (DER) =', bytesToHex(ephSignatureDer));
 
     const ephCertificate = new Uint8Array([
         ephemeralPublic.length,
@@ -185,109 +130,165 @@ export async function getDeployedSecretV2(dongle, masterPrivate, targetId, signe
         ephSignatureDer.length,
         ...ephSignatureDer
     ]);
-    console.log('SCP: Ephemeral certificate =', bytesToHex(ephCertificate));
 
-    // P1 = 0x80 indicates this is the last certificate
-    console.log('SCP: Sending VALIDATE_CERT (E051 P1=0x80) for ephemeral cert');
+    // P1=0x80 = last certificate
     apdu = new Uint8Array([0xe0, 0x51, 0x80, 0x00, ephCertificate.length, ...ephCertificate]);
-    console.log('SCP: APDU =', bytesToHex(apdu));
-    response = await dongle.exchange(apdu);
-    console.log('SCP: Response =', bytesToHex(response));
+    console.log(`SCP: VALIDATE_CERT ephemeral APDU len=${apdu.length}`);
+    result = await rawExchange(apdu);
+    if (result.sw !== 0x9000) {
+        console.warn(`SCP: Ephemeral cert SW=0x${result.sw.toString(16)} (continuing)`);
+    }
 
-    // Walk device certificates
+    // --- Step 5: GET_CERT (walk device certificates) ---
+    // Python: dongle.exchange(bytearray.fromhex('E052000000')) for index 0
+    //         dongle.exchange(bytearray.fromhex('E052800000')) for index 1
     let lastDevPubKey = new PublicKey(testMasterPublic, true);
     let devicePublicKey = null;
-    let index = 0;
 
-    while (true) {
-        let certResponse;
-        if (index === 0) {
-            certResponse = await dongle.exchange(hexToBytes('e052000000'));
-        } else if (index === 1) {
-            certResponse = await dongle.exchange(hexToBytes('e052800000'));
-        } else {
-            break;
+    for (let index = 0; index < 2; index++) {
+        const p1 = index === 0 ? 0x00 : 0x80;
+        const certApdu = new Uint8Array([0xe0, 0x52, p1, 0x00, 0x00]);
+        const certResult = await rawExchange(certApdu);
+        
+        if (certResult.sw !== 0x9000) {
+            console.warn(`SCP: GET_CERT[${index}] SW=0x${certResult.sw.toString(16)}`);
         }
 
-        if (certResponse.length === 0) {
-            break;
+        const certResponse = certResult.data;
+        if (!certResponse || certResponse.length === 0) {
+            console.warn(`SCP: GET_CERT[${index}] empty response - skipping`);
+            continue;
         }
 
-        let offset = 1;
-        const headerLen = certResponse[offset - 1];
+        console.log(`SCP: GET_CERT[${index}] ${certResponse.length} bytes`);
+
+        // Parse certificate: header(len+data) || pubkey(len+data) || sig(len+data)
+        let offset = 0;
+        const headerLen = certResponse[offset++];
         const certHeader = certResponse.slice(offset, offset + headerLen);
-        offset += headerLen + 1;
+        offset += headerLen;
 
-        const pubKeyLen = certResponse[offset - 1];
+        const pubKeyLen = certResponse[offset++];
         const certPublicKey = certResponse.slice(offset, offset + pubKeyLen);
-        offset += pubKeyLen + 1;
+        offset += pubKeyLen;
 
-        const sigLen = certResponse[offset - 1];
+        const sigLen = certResponse[offset++];
         const certSignatureArray = certResponse.slice(offset, offset + sigLen);
 
+        // Verify certificate signature
         const certSignature = lastDevPubKey.ecdsaDeserialize(certSignatureArray);
 
         let certSignedData;
         if (index === 0) {
-            // First cert: device certificate
             devicePublicKey = certPublicKey;
             certSignedData = new Uint8Array([0x02, ...certHeader, ...certPublicKey]);
         } else {
-            // Second cert: ephemeral key from device
             certSignedData = new Uint8Array([0x12, ...deviceNonce, ...nonce, ...certPublicKey]);
         }
 
-        if (!lastDevPubKey.ecdsaVerify(certSignedData, certSignature)) {
+        const verified = lastDevPubKey.ecdsaVerify(certSignedData, certSignature);
+        if (!verified) {
             if (index === 0) {
-                console.log('Broken certificate chain - loading from user key');
+                console.log('SCP: Broken certificate chain - loading from user key');
             } else {
-                throw new Error('Broken certificate chain');
+                throw new Error('SCP: Broken certificate chain at device ephemeral cert');
             }
+        } else {
+            console.log(`SCP: Device cert[${index}] verified`);
         }
 
         lastDevPubKey = new PublicKey(certPublicKey, true);
-        index++;
+        console.log(`SCP: GET_CERT[${index}] pubKey=${bytesToHex(certPublicKey).slice(0, 16)}... (${certPublicKey.length}B)`);
     }
 
-    // Commit ECDH channel
-    await dongle.exchange(hexToBytes('e053000000'));
+    // --- Step 6: COMMIT ---
+    // Python: dongle.exchange(bytearray.fromhex('E053000000'))
+    result = await rawExchange(new Uint8Array([0xe0, 0x53, 0x00, 0x00, 0x00]));
+    if (result.sw !== 0x9000) {
+        console.warn(`SCP: COMMIT SW=0x${result.sw.toString(16)}`);
+    }
 
-    // Compute shared secret
-    // CRITICAL: Python's deployed.py calls ecdh() WITHOUT scpv3 parameter,
-    // which defaults to scpv3=False (compressed point format, 33 bytes).
-    // We MUST use the same format to get the same shared secret!
+    // --- Step 7: ECDH shared secret ---
     const ephemeralPrivBytes = hexToBytes(ephemeralPrivate.serialize());
-    console.log('SCP: Device ephemeral pubkey for ECDH:', bytesToHex(lastDevPubKey.serialize(false)));
-    console.log('SCP: Our ephemeral private key:', ephemeralPrivate.serialize());
-    console.log('SCP: Using COMPRESSED POINT format (scpv3=false) to match Python');
-    const secret = lastDevPubKey.ecdh(ephemeralPrivBytes, false);  // MUST be false to match Python
-    console.log('SCP: ECDH secret (raw):', bytesToHex(secret));
+    console.log(`SCP: ECDH devPub=${bytesToHex(lastDevPubKey.serialize(false)).slice(0, 16)}...`);
+    const secret = lastDevPubKey.ecdh(ephemeralPrivBytes);
+    console.log(`SCP: ECDH secret=${bytesToHex(secret)}`);
+    console.log('SCP: Secure channel established');
 
-    // Return format depends on target ID and requested format
+    // Return format depends on SCP version
     if (ecdhSecretFormat === 1 || (targetId & 0xf) === 0x2) {
+        // SCP v2: first 16 bytes
         return secret.slice(0, 16);
     } else if ((targetId & 0xf) >= 0x3) {
-        return {
-            ecdh_secret: secret,
-            devicePublicKey: devicePublicKey
-        };
+        // SCP v3: full secret + device public key for key derivation
+        return { ecdh_secret: secret, devicePublicKey };
     }
 
     return secret.slice(0, 16);
 }
 
-/**
- * Convert uint32 to big-endian bytes
- * @param {number} value 
- * @returns {Uint8Array}
- */
-function uint32ToBytes(value) {
-    return new Uint8Array([
-        (value >> 24) & 0xff,
-        (value >> 16) & 0xff,
-        (value >> 8) & 0xff,
-        value & 0xff
+// Legacy SCP v1 (pre Nano S 1.4) - kept for completeness
+export async function getDeployedSecretV1(dongle, masterPrivate, targetId) {
+    const testMaster = new PrivateKey(masterPrivate);
+    const testMasterPublic = testMaster.pubkey.serialize(false);
+    const targetIdBytes = uint32ToBytes(targetId);
+
+    let apdu = new Uint8Array([0xe0, 0x04, 0x00, 0x00, targetIdBytes.length, ...targetIdBytes]);
+    await dongle.exchange(apdu);
+
+    const nonce = randomBytes(8);
+    apdu = new Uint8Array([0xe0, 0x50, 0x00, 0x00, nonce.length, ...nonce]);
+    const batchInfo = await dongle.exchange(apdu);
+    const deviceNonce = batchInfo.slice(4, 12);
+
+    const dataToSign = new Uint8Array([0x01, ...testMasterPublic]);
+    const signature = testMaster.ecdsaSign(dataToSign);
+    const signatureDer = testMaster.ecdsaSerialize(signature);
+
+    const certificate = new Uint8Array([
+        testMasterPublic.length, ...testMasterPublic,
+        signatureDer.length, ...signatureDer
     ]);
+    
+    const ephemeralPrivate = new PrivateKey();
+    const ephemeralPublic = ephemeralPrivate.pubkey.serialize(false);
+
+    const ephDataToSign = new Uint8Array([0x11, ...nonce, ...deviceNonce, ...ephemeralPublic]);
+    const ephSig = testMaster.ecdsaSign(ephDataToSign);
+    const ephSigDer = testMaster.ecdsaSerialize(ephSig);
+
+    const fullCert = new Uint8Array([
+        ...certificate,
+        ephemeralPublic.length, ...ephemeralPublic,
+        ephSigDer.length, ...ephSigDer
+    ]);
+
+    apdu = new Uint8Array([0xe0, 0x51, 0x00, 0x00, fullCert.length, ...fullCert]);
+    await dongle.exchange(apdu);
+
+    let lastPubKey = new PublicKey(testMasterPublic, true);
+    let index = 0;
+    while (true) {
+        const certResponse = await dongle.exchange(new Uint8Array([0xe0, 0x52, 0x00, 0x00, 0x00]));
+        if (certResponse.length === 0) break;
+
+        let offset = 0;
+        const headerLen = certResponse[offset++];
+        offset += headerLen;
+        const pubKeyLen = certResponse[offset++];
+        const certPublicKey = certResponse.slice(offset, offset + pubKeyLen);
+        offset += pubKeyLen;
+
+        lastPubKey = new PublicKey(certPublicKey, true);
+        index++;
+        if (index >= 2) break;
+    }
+
+    await dongle.exchange(new Uint8Array([0xe0, 0x53, 0x00, 0x00, 0x00]));
+
+    const ephemeralPrivBytes = hexToBytes(ephemeralPrivate.serialize());
+    const secret = lastPubKey.ecdh(ephemeralPrivBytes);
+    return secret.slice(0, 16);
 }
 
-export default { getDeployedSecretV1, getDeployedSecretV2 };
+export default { getDeployedSecretV2, getDeployedSecretV1 };

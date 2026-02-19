@@ -2,27 +2,33 @@
  * Elliptic Curve Wrapper for secp256k1
  * Port of ledgerblue/ecWrapper.py
  * 
- * Uses @noble/secp256k1 for cryptographic operations
+ * Uses @noble/secp256k1 v3 for cryptographic operations
+ * 
+ * CRITICAL: noble v3 sign()/verify() hash internally with SHA256.
+ *   - raw=false → pass raw msg to sign(), it will hash once (matching Python/device)
+ *   - raw=true  → msg is already hashed, use { prehashed: true } to skip internal hash
  */
 
 import * as secp256k1 from '@noble/secp256k1';
-import { sha256 } from '@noble/hashes/sha256';
-import { hmac } from '@noble/hashes/hmac';
-import { randomBytes } from '@noble/hashes/utils';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { hmac } from '@noble/hashes/hmac.js';
+import { randomBytes } from '@noble/hashes/utils.js';
 
-// Configure secp256k1 to use our hash functions
-secp256k1.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp256k1.etc.concatBytes(...m));
+// Configure secp256k1 sync hashes (v3 API)
+secp256k1.hashes.sha256 = (msg) => sha256(msg);
+secp256k1.hashes.hmacSha256 = (key, ...msgs) => hmac(sha256, key, secp256k1.etc.concatBytes(...msgs));
+
+// secp256k1 curve order for low-S normalization
+const SECP256K1_ORDER = BigInt('0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141');
+const HALF_ORDER = SECP256K1_ORDER / 2n;
 
 /**
  * Convert compact signature (64 bytes r||s) to DER format
- * @param {Uint8Array} compact - 64 byte compact signature
- * @returns {Uint8Array} - DER encoded signature
  */
 function compactToDER(compact) {
     const r = compact.slice(0, 32);
     const s = compact.slice(32, 64);
     
-    // Remove leading zeros but keep at least one byte
     let rStart = 0;
     while (rStart < r.length - 1 && r[rStart] === 0) rStart++;
     let rBytes = r.slice(rStart);
@@ -31,7 +37,6 @@ function compactToDER(compact) {
     while (sStart < s.length - 1 && s[sStart] === 0) sStart++;
     let sBytes = s.slice(sStart);
     
-    // Add 0x00 prefix if high bit is set (to indicate positive number)
     if (rBytes[0] & 0x80) {
         const newR = new Uint8Array(rBytes.length + 1);
         newR[0] = 0;
@@ -45,308 +50,182 @@ function compactToDER(compact) {
         sBytes = newS;
     }
     
-    // Build DER: 0x30 <len> 0x02 <rlen> <r> 0x02 <slen> <s>
     const totalLen = 2 + rBytes.length + 2 + sBytes.length;
     const der = new Uint8Array(2 + totalLen);
     let offset = 0;
-    
-    der[offset++] = 0x30; // SEQUENCE
+    der[offset++] = 0x30;
     der[offset++] = totalLen;
-    der[offset++] = 0x02; // INTEGER
+    der[offset++] = 0x02;
     der[offset++] = rBytes.length;
     der.set(rBytes, offset);
     offset += rBytes.length;
-    der[offset++] = 0x02; // INTEGER
+    der[offset++] = 0x02;
     der[offset++] = sBytes.length;
     der.set(sBytes, offset);
-    
     return der;
 }
 
 /**
- * Parse DER signature to r and s values
- * @param {Uint8Array} der - DER encoded signature
- * @returns {{r: bigint, s: bigint}}
+ * Parse DER signature to compact (64 bytes r||s)
  */
-function derToRS(der) {
-    if (der[0] !== 0x30) throw new Error('Invalid DER signature');
+function derToCompact(der) {
+    if (der[0] !== 0x30) throw new Error('Invalid DER: missing SEQUENCE tag');
     let offset = 2;
     
-    if (der[offset] !== 0x02) throw new Error('Invalid DER signature');
+    if (der[offset] !== 0x02) throw new Error('Invalid DER: missing INTEGER for r');
     offset++;
     const rLen = der[offset++];
-    const rBytes = der.slice(offset, offset + rLen);
+    const rRaw = der.slice(offset, offset + rLen);
     offset += rLen;
     
-    if (der[offset] !== 0x02) throw new Error('Invalid DER signature');
+    if (der[offset] !== 0x02) throw new Error('Invalid DER: missing INTEGER for s');
     offset++;
     const sLen = der[offset++];
-    const sBytes = der.slice(offset, offset + sLen);
+    const sRaw = der.slice(offset, offset + sLen);
     
-    return {
-        r: bytesToBigInt(rBytes),
-        s: bytesToBigInt(sBytes)
-    };
+    const compact = new Uint8Array(64);
+    const rTrim = rRaw[0] === 0 && rRaw.length > 32 ? rRaw.slice(1) : rRaw;
+    compact.set(rTrim, 32 - rTrim.length);
+    const sTrim = sRaw[0] === 0 && sRaw.length > 32 ? sRaw.slice(1) : sRaw;
+    compact.set(sTrim, 64 - sTrim.length);
+    return compact;
 }
 
 /**
- * PublicKey class - wraps secp256k1 public key operations
+ * Ensure compact signature has low-S
  */
-export class PublicKey {
-    /**
-     * @param {Uint8Array} pubkey - Public key bytes (65 bytes uncompressed with 0x04 prefix)
-     * @param {boolean} raw - If true, pubkey is raw bytes
-     */
-    constructor(pubkey = null, raw = false) {
-        if (pubkey === null) {
-            this._point = null;
-        } else if (raw) {
-            this._pubkeyBytes = new Uint8Array(pubkey);
-            if (pubkey[0] === 0x04 && pubkey.length === 65) {
-                this._point = secp256k1.ProjectivePoint.fromHex(pubkey);
-            } else if ((pubkey[0] === 0x02 || pubkey[0] === 0x03) && pubkey.length === 33) {
-                this._point = secp256k1.ProjectivePoint.fromHex(pubkey);
-            } else {
-                throw new Error('Invalid public key format');
-            }
-        } else {
-            throw new Error('Non-raw init not supported');
-        }
-    }
-
-    /**
-     * Serialize the public key
-     * @param {boolean} compressed - If true, return 33-byte compressed format
-     * @returns {Uint8Array}
-     */
-    serialize(compressed = true) {
-        if (compressed) {
-            return this._point.toRawBytes(true);
-        } else {
-            return this._point.toRawBytes(false);
-        }
-    }
-
-    /**
-     * Deserialize an ECDSA signature from DER format
-     * @param {Uint8Array} serSig - Serialized DER signature
-     * @returns {secp256k1.Signature} - Signature object for verification
-     */
-    ecdsaDeserialize(serSig) {
-        const { r, s } = derToRS(serSig);
-        return new secp256k1.Signature(r, s);
-    }
-
-    /**
-     * Perform ECDH key exchange
-     * @param {Uint8Array} scalar - Private key scalar (32 bytes)
-     * @param {boolean} scpv3 - Use SCP v3 format (X+counter instead of compressed point)
-     * @returns {Uint8Array} - Shared secret (32 bytes, SHA256 hashed)
-     */
-    ecdh(scalar, scpv3 = false) {
-        const sharedPoint = this._point.multiply(bytesToBigInt(scalar));
-        
-        let data;
-        if (!scpv3) {
-            // SCP v2 / Default: SHA256(compressed point)
-            // Compressed point = 33 bytes (02/03 prefix + X coordinate)
-            // This is what Python's deployed.py uses!
-            data = sharedPoint.toRawBytes(true);  // true = compressed
-            console.log('ECDH: Using COMPRESSED POINT format (33 bytes):', bytesToHex(data));
-        } else {
-            // SCP v3 alternate: SHA256(X coordinate + counter)
-            // X coordinate (32 bytes) + counter (4 bytes, 0x00000001) = 36 bytes
-            // WARNING: Python does NOT use this format by default!
-            const xBytes = bigIntToBytes(sharedPoint.x, 32);
-            data = new Uint8Array(36);
-            data.set(xBytes, 0);
-            data[32] = 0x00;
-            data[33] = 0x00;
-            data[34] = 0x00;
-            data[35] = 0x01;
-            console.log('ECDH: Using X+COUNTER format (36 bytes):', bytesToHex(data));
-        }
-        
-        const result = sha256(data);
-        console.log('ECDH: Secret (SHA256):', bytesToHex(result));
+function ensureLowS(compact) {
+    const s = bytesToBigInt(compact.slice(32, 64));
+    if (s > HALF_ORDER) {
+        const newS = SECP256K1_ORDER - s;
+        const result = new Uint8Array(64);
+        result.set(compact.slice(0, 32));
+        result.set(bigIntToBytes(newS, 32), 32);
         return result;
     }
+    return compact;
+}
 
-    /**
-     * Tweak the public key by adding a scalar * G
-     * @param {Uint8Array} scalar - Scalar to add
-     */
+/**
+ * PublicKey class
+ */
+export class PublicKey {
+    constructor(pubkey = null, raw = false) {
+        if (pubkey === null) { this._point = null; return; }
+        if (!raw) throw new Error('Non-raw init not supported');
+        this._pubkeyBytes = new Uint8Array(pubkey);
+        this._point = secp256k1.Point.fromBytes(pubkey);
+    }
+
+    serialize(compressed = true) {
+        return this._point.toBytes(compressed);
+    }
+
+    /** Deserialize DER sig → compact 64 bytes */
+    ecdsaDeserialize(serSig) {
+        return derToCompact(serSig);
+    }
+
+    /** ECDH: SHA256(compressed_shared_point) - matches Python ledgerblue */
+    ecdh(scalar) {
+        const sharedPoint = this._point.multiply(bytesToBigInt(scalar));
+        return sha256(sharedPoint.toBytes(true));
+    }
+
     tweakAdd(scalar) {
-        const scalarBigInt = bytesToBigInt(scalar);
-        const tweakPoint = secp256k1.ProjectivePoint.BASE.multiply(scalarBigInt);
+        const tweakPoint = secp256k1.Point.BASE.multiply(bytesToBigInt(scalar));
         this._point = this._point.add(tweakPoint);
     }
 
     /**
-     * Verify an ECDSA signature
-     * @param {Uint8Array} msg - Message that was signed
-     * @param {*} rawSig - Signature (Signature object or DER bytes)
-     * @param {boolean} raw - If true, msg is already hashed
-     * @param {function} digest - Hash function to use
-     * @returns {boolean}
+     * Verify ECDSA signature
+     * noble v3: verify() hashes internally with SHA256
+     *   raw=false → pass raw msg, verify() hashes it (single hash)
+     *   raw=true  → msg is already hashed, use {prehashed:true}
      */
-    ecdsaVerify(msg, rawSig, raw = false, digest = sha256) {
-        let msgHash;
+    ecdsaVerify(msg, rawSig, raw = false) {
+        let compact;
+        if (rawSig.length === 64) {
+            compact = rawSig;
+        } else if (rawSig[0] === 0x30) {
+            compact = derToCompact(rawSig);
+        } else {
+            compact = rawSig;
+        }
+        
         if (raw) {
-            msgHash = msg;
+            // msg is already a hash - don't hash again
+            return secp256k1.verify(compact, msg, this._point.toBytes(false), { prehashed: true });
         } else {
-            msgHash = digest(msg);
+            // let verify() hash internally (single SHA256)
+            return secp256k1.verify(compact, msg, this._point.toBytes(false));
         }
-
-        let sig;
-        if (rawSig instanceof secp256k1.Signature) {
-            sig = rawSig;
-        } else if (rawSig instanceof Uint8Array) {
-            // Assume DER format
-            sig = this.ecdsaDeserialize(rawSig);
-        } else {
-            sig = rawSig;
-        }
-
-        // Use pubkey bytes for verification (not the point)
-        const pubkeyBytes = this._point.toRawBytes(false);
-        return secp256k1.verify(sig, msgHash, pubkeyBytes);
     }
 }
 
 /**
- * PrivateKey class - wraps secp256k1 private key operations
+ * PrivateKey class
  */
 export class PrivateKey {
-    /**
-     * @param {Uint8Array|null} privkey - Private key bytes (32 bytes) or null to generate
-     * @param {boolean} raw - Must be true
-     */
-    constructor(privkey = null, raw = true) {
-        if (!raw) {
-            throw new Error('Non-raw init not supported');
-        }
-
+    constructor(privkey = null) {
         if (privkey === null) {
-            this._privateKey = secp256k1.utils.randomPrivateKey();
+            this._privateKey = secp256k1.utils.randomSecretKey();
         } else {
             this._privateKey = new Uint8Array(privkey);
         }
-
-        const pubkeyBytes = secp256k1.getPublicKey(this._privateKey, false);
-        this.pubkey = new PublicKey(pubkeyBytes, true);
+        this.pubkey = new PublicKey(secp256k1.getPublicKey(this._privateKey, false), true);
     }
 
-    /**
-     * Serialize the private key as hex string
-     * @returns {string}
-     */
-    serialize() {
-        return bytesToHex(this._privateKey);
-    }
+    serialize() { return bytesToHex(this._privateKey); }
+    getPrivateKeyBytes() { return this._privateKey; }
 
-    /**
-     * Get raw private key bytes
-     * @returns {Uint8Array}
-     */
-    getPrivateKeyBytes() {
-        return this._privateKey;
-    }
-
-    /**
-     * Serialize an ECDSA signature to DER format
-     * @param {*} rawSig - Signature object
-     * @returns {Uint8Array}
-     */
+    /** Serialize compact sig (64 bytes) → DER with low-S */
     ecdsaSerialize(rawSig) {
-        // Check if it's a Signature object with toCompactRawBytes
-        if (rawSig && typeof rawSig.toCompactRawBytes === 'function') {
-            const compact = rawSig.toCompactRawBytes();
-            return compactToDER(compact);
-        }
-        // Already bytes
-        if (rawSig instanceof Uint8Array) {
-            return rawSig;
+        if (rawSig instanceof Uint8Array && rawSig.length === 64) {
+            return compactToDER(ensureLowS(rawSig));
         }
         return rawSig;
     }
 
     /**
-     * Sign a message with ECDSA
-     * @param {Uint8Array} msg - Message to sign
-     * @param {boolean} raw - If true, msg is already hashed
-     * @param {function} digest - Hash function to use
-     * @param {boolean} rfc6979 - Use deterministic nonce (always true in noble)
-     * @returns {Signature}
+     * Sign message with ECDSA
+     * noble v3: sign() hashes internally with SHA256
+     *   raw=false → pass raw msg to sign(), it hashes once (matches Python/device)
+     *   raw=true  → msg is already hashed, use {prehashed:true}
      */
-    ecdsaSign(msg, raw = false, digest = sha256, rfc6979 = false) {
-        let msgHash;
+    ecdsaSign(msg, raw = false) {
         if (raw) {
-            msgHash = msg;
+            // msg is already a hash - don't hash again
+            return secp256k1.sign(msg, this._privateKey, { prehashed: true });
         } else {
-            msgHash = digest(msg);
+            // let sign() hash internally (single SHA256, matches Python secp256k1.ecdsa_sign)
+            return secp256k1.sign(msg, this._privateKey);
         }
-
-        // noble/secp256k1 always uses RFC6979
-        const sig = secp256k1.sign(msgHash, this._privateKey);
-        return sig;
     }
 }
 
-// Utility functions
+// --- Utilities ---
 
-/**
- * Convert bytes to BigInt (big endian)
- * @param {Uint8Array} bytes 
- * @returns {bigint}
- */
 function bytesToBigInt(bytes) {
     let result = 0n;
-    for (const byte of bytes) {
-        result = (result << 8n) | BigInt(byte);
-    }
+    for (const byte of bytes) result = (result << 8n) | BigInt(byte);
     return result;
 }
 
-/**
- * Convert BigInt to bytes (big endian)
- * @param {bigint} num 
- * @param {number} length 
- * @returns {Uint8Array}
- */
 function bigIntToBytes(num, length) {
     const bytes = new Uint8Array(length);
-    for (let i = length - 1; i >= 0; i--) {
-        bytes[i] = Number(num & 0xffn);
-        num >>= 8n;
-    }
+    for (let i = length - 1; i >= 0; i--) { bytes[i] = Number(num & 0xffn); num >>= 8n; }
     return bytes;
 }
 
-/**
- * Convert bytes to hex string
- * @param {Uint8Array} bytes 
- * @returns {string}
- */
 export function bytesToHex(bytes) {
-    return Array.from(bytes)
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
+    return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-/**
- * Convert hex string to bytes
- * @param {string} hex 
- * @returns {Uint8Array}
- */
 export function hexToBytes(hex) {
-    if (hex.length % 2 !== 0) {
-        throw new Error('Hex string must have even length');
-    }
+    if (hex.length % 2 !== 0) throw new Error('Hex string must have even length');
     const bytes = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < bytes.length; i++) {
-        bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
-    }
+    for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
     return bytes;
 }
 

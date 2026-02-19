@@ -19,7 +19,7 @@ export class CommException extends Error {
 /**
  * Get possible error cause from status word
  * @param {number} sw - Status word
- * @returns {string} - Possible cause description
+ * @returns {string}
  */
 export function getPossibleErrorCause(sw) {
     const causeMap = {
@@ -34,16 +34,17 @@ export function getPossibleErrorCause(sw) {
         0x6e01: "CLA not supported - wrong APDU format after SCP?",
         0x5515: "Did you unlock the device?",
         0x6814: "Unexpected target device: verify that you are using the right device?",
-        0x511f: "The OS version on your device does not seem compatible with the SDK version used to build the app",
+        0x511f: "OS version incompatible with SDK used to build the app",
         0x5120: "Sideload is not supported on Nano X",
         0x6511: "Device is not in Recovery Mode - boot while holding button",
         0x6512: "Device locked or not in right state",
         0x5707: "SCP certificate validation failed - check custom CA installation",
         0x6603: "SCP mutual authentication failed - certificate chain rejected",
         0x5214: "Custom CA setup rejected - device may not be in onboarding state",
+        0x6615: "SCP encryption error - key mismatch or corrupted data",
     };
 
-    return causeMap[sw] || "Unknown reason";
+    return causeMap[sw] || `Unknown reason (0x${sw.toString(16)})`;
 }
 
 export default CommException;

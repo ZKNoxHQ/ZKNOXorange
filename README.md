@@ -1,146 +1,159 @@
 # ZKNOX Orange
 
-**Ledger Sideloader** - Load custom applications onto Ledger devices for development and testing.
+Web-based sideloader for Ledger hardware wallets. Load custom applications onto your device directly from the browser using WebHID.
 
-## ⚠️ Development Tool
-
-This tool is intended for **developers** testing their own applications. Only use apps from sources you trust.
-
-## Overview
-
-ZKNOX Orange allows developers to sideload custom applications onto Ledger hardware wallets. It implements the Ledger SCP (Secure Channel Protocol) for secure communication and app deployment.
-
-## Supported Devices
-
-- Ledger Nano S Plus ✅ (recommended for development)
-- Ledger Flex ⚠️ (limited Custom CA support)
-- Ledger Stax ⚠️ (limited Custom CA support)
-
-## Features
-
-- 📱 **WebHID Support** - Works directly in Chrome/Edge browsers
-- 🔐 **SCP v3** - Secure Channel Protocol with encryption and MAC
-- 🔑 **Custom CA** - Push custom Certificate Authority for sideloading
-- 📦 **App Loading** - Load .hex files with parameters
-- 🗑️ **App Management** - List and delete installed apps
-- 🧪 **Test CA** - Verify Custom CA installation
-
-## Setup for Sideloading
-
-### 1. Push Custom CA (One-time setup)
-
-1. **Factory reset** your Ledger device
-2. Enter **Recovery Mode**:
-   - Nano S/S+/X: Hold left button while connecting USB
-   - Flex/Stax: Hold button near USB port while connecting
-3. Click **Scan USB Devices**
-4. Click **Push Custom CA**
-5. Complete device onboarding (create PIN)
-
-### 2. Load Applications
-
-1. Connect device (normal mode, unlocked)
-2. Click **Connect Device**
-3. Load your `.hex` file
-4. Optionally load `.map` file for data size
-5. Fill in app parameters
-6. Click **Load Application**
-7. Confirm on device
-
-## Configuration
-
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| Target ID | Device identifier | `0x33100004` (Nano S Plus) |
-| App Name | Application name | `MyApp` |
-| App Version | Version string | `1.0.0` |
-| Data Size | NVRAM size from .map | `512` |
-| App Flags | Application flags | `0x000` |
-
-### Target IDs
-
-| Device | Target ID |
-|--------|-----------|
-| Nano S Plus | `0x33100004` |
-| Nano X | `0x33000004` |
-| Flex | `0x33300004` |
-| Stax | `0x33200004` |
-
-## Files
-
-```
-zknox-orange/
-├── sideloader.html       # Main application
-├── dist/
-│   └── ledgerjs.bundle.js
-├── src/                  # Source modules
-│   ├── loadApp.js        # App loading logic
-│   ├── deployed.js       # SCP implementation
-│   ├── hexLoader.js      # Hex file processing
-│   ├── hexParser.js      # Intel HEX parser
-│   ├── ecWrapper.js      # Cryptography
-│   └── ...
-├── zknox-logo.png
-├── zknox-orange.jpg
-└── README.md
-```
-
-## Custom CA Details
-
-ZKNOX Orange uses a deterministic Custom CA:
-- **Private Key**: `1` (for simplicity)
-- **Public Key**: secp256k1 generator point `G`
-
-```
-G = 04 79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798
-       483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8
-```
-
-## Troubleshooting
-
-### Error: 6511
-Device not in Recovery Mode. Reboot while holding button.
-
-### Error: 5707
-SCP certificate validation failed. Custom CA may not be installed.
-
-### Error: 6512
-Device locked or not in correct state. Unlock and go to dashboard.
-
-### Error: 5214
-Custom CA setup rejected. Device may need to be in onboarding state.
-
-### "Broken certificate chain"
-Normal when using random SCP key. Custom CA is for app signing, not SCP.
-
-## Command Line Alternative
+## Quick Start
 
 ```bash
-# Push Custom CA
-python -m ledgerblue.setupCustomCA \
-  --targetId 0x33100004 \
-  --public 0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8 \
-  --name dev
-
-# Load App
-python -m ledgerblue.loadApp \
-  --targetId 0x33100004 \
-  --appName "TestApp" \
-  --appVersion "1.0.0" \
-  --appFlags 0x000 \
-  --dataSize 512 \
-  --tlv --delete \
-  --fileName app.hex \
-  --signApp \
-  --signPrivateKey 0000000000000000000000000000000000000000000000000000000000000001 \
-  --rootPrivateKey 0000000000000000000000000000000000000000000000000000000000000001
+npm install
+npm run build
+npm run serve        # http://localhost:8080
 ```
 
-## Links
+Open `sideloader.html` in Chrome/Edge 89+ (WebHID required).
 
-- Website: [zknox.com](https://zknox.com)
-- ZKNOX Blue: For official Ledger apps
+## Project Structure
 
-## License
+```
+├── sideloader.html          # Main UI
+├── src/                     # Source modules
+│   ├── index.js             # Entry point & exports
+│   ├── deployed.js          # SCP handshake (Secure Channel Protocol)
+│   ├── ecWrapper.js         # ECDSA / secp256k1 wrapper
+│   ├── hexLoader.js         # Intel HEX parser + app install APDUs
+│   └── commException.js     # Transport error handling
+├── dist/
+│   └── ledgerjs.bundle.js   # Built bundle (esbuild)
+├── apps/                    # ZKNOX Apps Catalog
+│   ├── frostgun/
+│   │   ├── app.hex          # Compiled application binary
+│   │   ├── app.map          # Linker map (dataSize, installParamsSize)
+│   │   ├── Makefile         # Build config (APPNAME, curves, paths)
+│   │   └── manifest.json    # SDK metadata (api_level)
+│   └── mldsa/
+│       ├── app.hex
+│       ├── app.map
+│       ├── Makefile
+│       └── manifest.json
+└── package.json
+```
 
-© 2025 ZKNOX. All rights reserved.
+## ZKNOX Apps Catalog
+
+The catalog lets users install pre-built apps in one click. Clicking a card fetches all files, auto-detects parameters, and sideloads directly.
+
+### What gets auto-detected
+
+| Parameter | Source | File |
+|---|---|---|
+| `APPNAME` | Makefile | `apps/{id}/Makefile` |
+| `APPVERSION` (M.N.P) | Makefile | `apps/{id}/Makefile` |
+| `CURVE_APP_LOAD_PARAMS` | Makefile | `apps/{id}/Makefile` |
+| `PATH_APP_LOAD_PARAMS` | Makefile | `apps/{id}/Makefile` |
+| `dataSize` | Map file | `apps/{id}/app.map` |
+| `installParamsSize` | Map file | `apps/{id}/app.map` |
+| `api_level` | Manifest | `apps/{id}/manifest.json` |
+
+### Adding an app to the catalog
+
+#### 1. Create the app directory
+
+```
+apps/myapp/
+├── app.hex
+├── app.map
+├── Makefile
+└── manifest.json
+```
+
+Copy `app.hex` and `app.map` from your build output. Copy the `Makefile` from your app source.
+
+#### 2. Create `manifest.json`
+
+```json
+{
+    "api_level": 25,
+    "_comment": "api_level comes from the SDK, not the app Makefile. To find it: grep -r 'API_LEVEL' $BOLOS_SDK/ --include='Makefile*' | head"
+}
+```
+
+The `api_level` is set by the Ledger SDK used at compile time, not by the app itself. To find the value for your build environment:
+
+```bash
+grep -r "API_LEVEL" $BOLOS_SDK/ --include="Makefile*" | head
+```
+
+All apps compiled with the same SDK share the same `api_level`.
+
+#### 3. Register in `sideloader.html`
+
+Find the `catalogApps` array in the `<script>` section and add an entry:
+
+```javascript
+const catalogApps = [
+    // ... existing apps ...
+    { id: 'myapp', name: 'My App', icon: '🔧', desc: 'Short description', dir: 'apps/myapp', appFlags: 0 },
+];
+```
+
+Fields:
+
+- `id` — unique identifier, must match the directory name under `apps/`
+- `name` — display name on the card
+- `icon` — emoji shown on the card
+- `desc` — short description shown below the name
+- `dir` — path to the app directory (always `apps/{id}`)
+- `appFlags` — app flags value (typically `0`, see SDK `include/appflags.h`)
+
+#### 4. Makefile requirements
+
+The parser reads these variables from the Makefile:
+
+```makefile
+APPNAME = "MyApp"
+APPVERSION_M = 1
+APPVERSION_N = 0
+APPVERSION_P = 0
+CURVE_APP_LOAD_PARAMS = secp256k1 ed25519
+PATH_APP_LOAD_PARAMS = "44'/60'"
+```
+
+Lines containing Make expressions (`$(...)`) are ignored — only simple assignments are parsed.
+
+### Updating an app
+
+Replace `app.hex` and `app.map` with the new build artifacts. If the SDK version changed, update `api_level` in `manifest.json`. The Makefile is re-parsed on every install, so changes to curves, paths, or version take effect immediately.
+
+## Usage
+
+### Normal Mode (sideloading)
+
+1. Put device in **Dashboard mode** (main menu, no app open)
+2. Select device type
+3. Click **Connect Device**
+4. Click an app from the **ZKNOX Apps Catalog** — install is automatic
+5. Or fill in **Application Details** manually and click **Load Application**
+
+### Custom CA Setup (first time)
+
+Before sideloading, a Custom CA must be installed on the device:
+
+1. Enter **Recovery Mode** (hold button while connecting USB)
+2. Click **Scan USB Devices**
+3. Click **Push Custom CA**
+4. Reboot device to normal Dashboard mode
+
+## Build
+
+```bash
+npm run build    # one-shot bundle
+npm run watch    # rebuild on changes
+```
+
+The bundle is built with esbuild from `src/index.js` to `dist/ledgerjs.bundle.js`.
+
+## Dependencies
+
+- `@noble/secp256k1` v3 — ECDSA signatures (RFC6979)
+- `@noble/hashes` v2 — SHA-256, HMAC
+- `esbuild` — bundler

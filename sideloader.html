@@ -276,6 +276,26 @@
         
         input[type="checkbox"] { width: auto; margin-right: 0.5rem; }
         
+        /* Catalog Cards */
+        .catalog-card {
+            flex: 0 0 auto;
+            min-width: 180px;
+            padding: 1.25rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-align: center;
+        }
+        .catalog-card:hover { border-color: var(--accent-primary); box-shadow: var(--shadow-md); transform: translateY(-2px); }
+        .catalog-card.active { border-color: var(--accent-primary); background: rgba(124, 58, 237, 0.05); box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15); }
+        .catalog-card .card-icon { font-size: 2rem; margin-bottom: 0.5rem; }
+        .catalog-card .card-name { font-weight: 700; font-size: 1rem; color: var(--text-primary); margin-bottom: 0.25rem; }
+        .catalog-card .card-desc { font-size: 0.8rem; color: var(--text-muted); }
+        .catalog-card .card-status { font-size: 0.75rem; margin-top: 0.5rem; font-family: 'IBM Plex Mono', monospace; color: var(--text-muted); }
+        .catalog-card .card-status.loaded { color: var(--success); }
+        
         @media (max-width: 768px) {
             .hero-container { flex-direction: column; text-align: center; }
             .hero-image { flex: 0 0 auto; max-width: 200px; }
@@ -419,6 +439,13 @@
                 </div>
             </div>
 
+            <div class="section" id="catalogSection">
+                <h2>ZKNOX Apps Catalog</h2>
+                <p>One-click install a pre-built ZKNOX application onto your connected device.</p>
+                <div id="catalogGrid" style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1rem;">
+                </div>
+            </div>
+
             <div class="section">
                 <h2>2. Application Details</h2>
                 
@@ -442,7 +469,7 @@
                 <input type="file" id="mapFile" accept=".map">
                 <div class="help">app.map file - automatically computes Data Size and Install Params Size</div>
                 <div id="mapInfo">
-                    <span>✓ Map parsed:</span>
+                    <span>✔ Map parsed:</span>
                     <span id="mapDataSize"></span> |
                     <span id="mapInstallParams"></span>
                 </div>
@@ -569,7 +596,7 @@
             log('WebHID requires HTTPS or localhost', 'warn');
             document.getElementById('connectBtn').disabled = true;
         } else {
-            log('✓ WebHID supported', 'success');
+            log('✔ WebHID supported', 'success');
         }
 
         let TransportWebHID, loadApp, deleteApp, listApps, getMemInfo, IntelHexParser;
@@ -585,7 +612,7 @@
             getMemInfo = mod.getMemInfo;
             IntelHexParser = mod.IntelHexParser;
             modulesLoaded = true;
-            log('✓ Modules loaded successfully', 'success');
+            log('✔ Modules loaded successfully', 'success');
             log('Ready - Click "Connect Device" to start', 'info');
         } catch (e) {
             log(`❌ Failed to load modules: ${e.message}`, 'error');
@@ -596,6 +623,205 @@
 
         let transport = null;
 
+        // ---- ZKNOX Apps Catalog ----
+        const catalogApps = [
+            { id: 'frostgun', name: 'FrostGun', icon: '🧊', desc: 'FROST multisig signing', dir: 'apps/frostgun', appFlags: 0 },
+            { id: 'mldsa', name: 'ML-DSA', icon: '🔮', desc: 'Post-quantum signatures', dir: 'apps/mldsa', appFlags: 0 },
+        ];
+
+        function renderCatalog() {
+            const grid = document.getElementById('catalogGrid');
+            grid.innerHTML = '';
+            catalogApps.forEach(app => {
+                const card = document.createElement('div');
+                card.className = 'catalog-card';
+                card.id = `catalog-${app.id}`;
+                card.innerHTML = `
+                    <div class="card-icon">${app.icon}</div>
+                    <div class="card-name">${app.name}</div>
+                    <div class="card-desc">${app.desc}</div>
+                    <div class="card-status" id="status-${app.id}">Click to install</div>
+                `;
+                card.onclick = () => loadCatalogApp(app);
+                grid.appendChild(card);
+            });
+        }
+
+        function parseMakefile(content) {
+            const result = {};
+            for (const line of content.split('\n')) {
+                // Match VAR = value, VAR := value, VAR ?= value (skip comments)
+                const m = line.match(/^\s*(APPNAME|APPVERSION_M|APPVERSION_N|APPVERSION_P|CURVE_APP_LOAD_PARAMS|PATH_APP_LOAD_PARAMS)\s*[:?]?=\s*(.+)/);
+                if (m) {
+                    const key = m[1].trim();
+                    let val = m[2].trim().replace(/#.*$/, '').trim(); // strip inline comments
+                    // Skip Make expressions we can't evaluate (e.g. $(if ...), $(filter ...))
+                    if (val.includes('$(')) continue;
+                    // Only keep first simple assignment (later := overrides are often Make expressions)
+                    if (!(key in result)) {
+                        result[key] = val;
+                    }
+                }
+            }
+            // Build version string from M.N.P if available
+            if (result.APPVERSION_M && result.APPVERSION_N && result.APPVERSION_P) {
+                result.APPVERSION = `${result.APPVERSION_M}.${result.APPVERSION_N}.${result.APPVERSION_P}`;
+            }
+            return result;
+        }
+
+        async function loadCatalogApp(app) {
+            const statusEl = document.getElementById(`status-${app.id}`);
+
+            // Check device connection
+            if (!transport) {
+                log('❌ Please connect device first', 'error');
+                statusEl.textContent = '⚠ Connect device first';
+                statusEl.style.color = 'var(--warning)';
+                return;
+            }
+
+            // Mark active card
+            document.querySelectorAll('.catalog-card').forEach(c => c.classList.remove('active'));
+            document.getElementById(`catalog-${app.id}`).classList.add('active');
+
+            statusEl.textContent = 'Fetching files...';
+            statusEl.className = 'card-status';
+
+            try {
+                // Fetch manifest.json for api_level
+                let apiLevel = 22;
+                const manifestResp = await fetch(`${app.dir}/manifest.json`);
+                if (manifestResp.ok) {
+                    const manifest = await manifestResp.json();
+                    apiLevel = manifest.api_level || 22;
+                    log(`Manifest: api_level=${apiLevel}`, 'debug');
+                } else {
+                    log('manifest.json not found, using default api_level=22', 'warn');
+                }
+
+                // Fetch Makefile for APPNAME, APPVERSION, CURVE_APP_LOAD_PARAMS, PATH_APP_LOAD_PARAMS
+                let appName = app.name;
+                let appVersion = '1.0.0';
+                let curves = null;
+                let paths = null;
+                const mkResp = await fetch(`${app.dir}/Makefile`);
+                if (mkResp.ok) {
+                    const mkVars = parseMakefile(await mkResp.text());
+                    if (mkVars.APPNAME) appName = mkVars.APPNAME.replace(/^"(.*)"$/, '$1');
+                    if (mkVars.APPVERSION) appVersion = mkVars.APPVERSION;
+                    if (mkVars.CURVE_APP_LOAD_PARAMS) {
+                        curves = mkVars.CURVE_APP_LOAD_PARAMS.split(/\s+/).filter(c => c);
+                        log(`Makefile: curves=${curves.join(', ')}`, 'debug');
+                    }
+                    if (mkVars.PATH_APP_LOAD_PARAMS) {
+                        // Paths are quoted tokens: "44'/60'" "45'/1'"
+                        const rawPaths = mkVars.PATH_APP_LOAD_PARAMS;
+                        const quoted = rawPaths.match(/"([^"]+)"/g);
+                        if (quoted) {
+                            paths = quoted.map(p => p.replace(/"/g, ''));
+                        } else {
+                            // Unquoted single path
+                            paths = [rawPaths.trim()];
+                        }
+                        log(`Makefile: paths=${paths.join(', ')}`, 'debug');
+                    }
+                    log(`Makefile: ${appName} v${appVersion}`, 'info');
+                } else {
+                    log('Makefile not found, using catalog defaults', 'warn');
+                }
+
+                // Fetch HEX
+                const hexResp = await fetch(`${app.dir}/app.hex`);
+                if (!hexResp.ok) throw new Error(`HEX not found: ${app.dir}/app.hex`);
+                const hexContent = await hexResp.text();
+
+                // Fetch MAP for dataSize / installParamsSize
+                let dataSize = 0, installParamsSize = 0;
+                const mapResp = await fetch(`${app.dir}/app.map`);
+                if (mapResp.ok) {
+                    const mapContent = await mapResp.text();
+                    const symbols = parseMapFile(mapContent);
+                    if (symbols._envram_data !== undefined && symbols._nvram_data !== undefined)
+                        dataSize = symbols._envram_data - symbols._nvram_data;
+                    if (symbols._einstall_parameters !== undefined && symbols._install_parameters !== undefined)
+                        installParamsSize = symbols._einstall_parameters - symbols._install_parameters;
+                }
+
+                // Fill form (for visibility / manual override if needed)
+                document.getElementById('appName').value = appName;
+                document.getElementById('appVersion').value = appVersion;
+                document.getElementById('hexContent').value = hexContent;
+                document.getElementById('curves').value = curves ? curves.join(', ') : '';
+                document.getElementById('paths').value = paths ? paths.join(', ') : '';
+                document.getElementById('appFlags').value = app.appFlags;
+                document.getElementById('apiLevel').value = apiLevel;
+                document.getElementById('dataSize').value = dataSize;
+                document.getElementById('installParamsSize').value = installParamsSize;
+                document.getElementById('hexFile').value = '';
+                document.getElementById('mapDataSize').textContent = `Data Size: ${dataSize}`;
+                document.getElementById('mapInstallParams').textContent = `Install Params: ${installParamsSize}`;
+                document.getElementById('mapInfo').style.display = 'block';
+
+                log(`📦 ${appName}: hex loaded, apiLevel=${apiLevel}, dataSize=${dataSize}, installParams=${installParamsSize}`, 'success');
+
+                // --- Auto-trigger sideload ---
+                statusEl.textContent = 'Sideloading...';
+                const targetId = parseInt(document.getElementById('targetId').value);
+                const deleteFirst = document.getElementById('deleteFirst').checked;
+
+                document.getElementById('progressContainer').style.display = 'block';
+                document.getElementById('progressBar').style.width = '10%';
+                document.getElementById('loadBtn').disabled = true;
+
+                const parser = new IntelHexParser(hexContent);
+                const areas = parser.getAreas();
+                const codeSize = parser.maxAddr() - parser.minAddr();
+                log(`HEX: ${areas.length} area(s), ${codeSize} bytes, boot=0x${parser.getBootAddr().toString(16)}`, 'info');
+                document.getElementById('progressBar').style.width = '20%';
+
+                log('Establishing secure channel...', 'info');
+                document.getElementById('progressBar').style.width = '30%';
+
+                const hash = await loadApp(transport, {
+                    targetId,
+                    targetVersion: '',
+                    fileName: hexContent,
+                    appName,
+                    appVersion,
+                    curves,
+                    paths,
+                    icon: null,
+                    dataSize: dataSize > 0 ? dataSize : null,
+                    installParamsSize: installParamsSize > 0 ? installParamsSize : null,
+                    appFlags: app.appFlags,
+                    apiLevel,
+                    delete: deleteFirst,
+                    debug: true
+                });
+
+                document.getElementById('progressBar').style.width = '100%';
+                log(`✅ ${appName} installed successfully! Hash: ${hash}`, 'success');
+                statusEl.textContent = '✓ Installed';
+                statusEl.className = 'card-status loaded';
+
+            } catch (e) {
+                statusEl.textContent = '✗ Failed';
+                statusEl.className = 'card-status';
+                statusEl.style.color = 'var(--danger)';
+                log(`❌ ${app.name} failed: ${e.message}`, 'error');
+                console.error('Catalog load error:', e);
+            } finally {
+                document.getElementById('loadBtn').disabled = false;
+                setTimeout(() => {
+                    document.getElementById('progressContainer').style.display = 'none';
+                    document.getElementById('progressBar').style.width = '0%';
+                }, 2000);
+            }
+        }
+
+        renderCatalog();
+
         document.getElementById('connectBtn').onclick = async () => {
             if (!modulesLoaded) { log('❌ Modules not loaded - cannot connect', 'error'); return; }
             if (!navigator.hid) { log('❌ WebHID not supported', 'error'); return; }
@@ -604,7 +830,7 @@
                 log('Requesting device access...', 'info');
                 log('A popup should appear - select your Ledger device', 'info');
                 transport = await TransportWebHID.request(true);
-                log('✓ Device connected!', 'success');
+                log('✔ Device connected!', 'success');
                 
                 document.getElementById('connectionStatus').textContent = 'Connected';
                 document.getElementById('connectionStatus').className = 'status connected';
@@ -952,10 +1178,12 @@
                 const mod = await import('./dist/ledgerjs.bundle.js');
                 const { getDeployedSecretV2, HexLoader } = mod;
                 
-                // Target ID for Flex
-                const targetId = 0x33300004;
+                // Use target ID from the UI selector
+                const targetId = parseInt(document.getElementById('targetId').value);
+                const deviceNames = {0x33100004: 'Nano S Plus', 0x33000004: 'Nano X', 0x33300004: 'Flex', 0x33200004: 'Stax'};
+                const deviceName = deviceNames[targetId] || 'Unknown';
                 
-                log(`Establishing SCP with Flex (targetId: 0x${targetId.toString(16)})...`, 'info');
+                log(`Establishing SCP with ${deviceName} (targetId: 0x${targetId.toString(16)})...`, 'info');
                 
                 // On a fresh device in recovery mode, we need to use a random key
                 // The device will accept any well-formed certificate chain
@@ -1139,14 +1367,16 @@
                 const mod = await import('./dist/ledgerjs.bundle.js');
                 const { getDeployedSecretV2 } = mod;
                 
-                // Target ID for Flex
-                const targetId = 0x33300004;
+                // Use target ID from the UI selector
+                const targetId = parseInt(document.getElementById('targetId').value);
                 
                 // Root private key = 1
                 const rootPrivateKey = new Uint8Array(32);
                 rootPrivateKey[31] = 0x01;
                 
-                log(`Attempting SCP handshake with Flex (targetId: 0x${targetId.toString(16)})...`, 'info');
+                const deviceNames = {0x33100004: 'Nano S Plus', 0x33000004: 'Nano X', 0x33300004: 'Flex', 0x33200004: 'Stax'};
+                const deviceName = deviceNames[targetId] || 'Unknown';
+                log(`Attempting SCP handshake with ${deviceName} (targetId: 0x${targetId.toString(16)})...`, 'info');
                 log('Using private key = 1 (expects Custom CA = G)...', 'info');
                 
                 const secret = await getDeployedSecretV2(targetTransport, rootPrivateKey, targetId);

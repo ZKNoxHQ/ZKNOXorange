@@ -626,13 +626,16 @@
         const catalogApps = [
             { id: 'frostgun', name: 'FrostGun', icon: '🧊', desc: 'FROST multisig signing', dir: 'apps/frostgun', appFlags: 0 },
             { id: 'mldsa', name: 'ML-DSA', icon: '🔮', desc: 'Post-quantum signatures', dir: 'apps/mldsa', appFlags: 0 },
-            { id: 'unchained', name: '7702 Unchained', icon: '🔓', desc: 'EIP-7702 delegation', dir: 'apps/unchained', appFlags: 0 },
+            { id: 'unchained', name: '7702 Unchained', icon: '🔓', desc: 'EIP-7702 delegation', dir: 'apps/unchained', appFlags: 0, frontUrl: 'https://zknox.com/7702_Unchained/index.html' },
         ];
 
         function renderCatalog() {
             const grid = document.getElementById('catalogGrid');
             grid.innerHTML = '';
             catalogApps.forEach(app => {
+                const wrapper = document.createElement('div');
+                wrapper.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:0.4rem;';
+
                 const card = document.createElement('div');
                 card.className = 'catalog-card';
                 card.id = `catalog-${app.id}`;
@@ -643,7 +646,18 @@
                     <div class="card-status" id="status-${app.id}">Click to install</div>
                 `;
                 card.onclick = () => loadCatalogApp(app);
-                grid.appendChild(card);
+                wrapper.appendChild(card);
+
+                if (app.frontUrl) {
+                    const link = document.createElement('a');
+                    link.href = app.frontUrl;
+                    link.target = '_blank';
+                    link.textContent = 'front';
+                    link.style.cssText = 'padding:0.25rem 0.75rem;font-size:0.75rem;font-family:"IBM Plex Mono",monospace;background:var(--accent-primary);color:#fff;border-radius:4px;text-decoration:none;font-weight:600;';
+                    wrapper.appendChild(link);
+                }
+
+                grid.appendChild(wrapper);
             });
         }
 

@@ -1442,6 +1442,12 @@
         }
 
         console.log('Sideloader initialized');
+
+        // Auto-trigger load if opened with ?autoload=true
+        if (new URLSearchParams(window.location.search).get('autoload') === 'true') {
+            log('🚀 Auto-load triggered from external link', 'info');
+            document.getElementById('loadBtn').click();
+        }
     </script>
 </body>
 </html>

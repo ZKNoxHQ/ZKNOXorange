@@ -417,7 +417,7 @@
             </div>
     
             <div class="section">
-                <h2>1. Connect Device</h2>
+                <h2>1. Device</h2>
                 <p>Put your Ledger device in <strong>Dashboard mode</strong> (main menu, no app open)</p>
                 
                 <div style="margin: 1rem 0;">
@@ -430,12 +430,10 @@
                         <option value="0x33300004">Flex</option>
                     </select>
                 </div>
-                
-                <button id="connectBtn">🔌 Connect Device</button>
-                <button id="disconnectBtn" class="secondary" disabled>Disconnect</button>
-                
-                <div id="deviceInfo">
-                    <strong>Status:</strong> <span id="connectionStatus" class="status disconnected">Disconnected</span>
+
+                <div id="deviceInfo" style="display: flex; align-items: center; gap: 1rem; margin-top: 0.75rem;">
+                    <span id="connectionStatus" class="status disconnected">Disconnected</span>
+                    <button id="disconnectBtn" class="secondary" disabled style="margin: 0; padding: 0.4rem 1rem; font-size: 0.85rem;">Disconnect</button>
                 </div>
             </div>
 
@@ -528,7 +526,7 @@
             <div class="section">
                 <h2>3. Load Application</h2>
                 
-                <button id="loadBtn" disabled>📦 Load Application</button>
+                <button id="loadBtn">🔌 Connect &amp; Load</button>
                 <button id="deleteBtn" class="danger" disabled>🗑️ Delete App</button>
                 <button id="listBtn" class="secondary" disabled>📋 List Apps</button>
                 
@@ -594,7 +592,7 @@
         if (!navigator.hid) {
             log('❌ WebHID not supported! Use Chrome/Edge 89+', 'error');
             log('WebHID requires HTTPS or localhost', 'warn');
-            document.getElementById('connectBtn').disabled = true;
+            document.getElementById('loadBtn').disabled = true;
         } else {
             log('✔ WebHID supported', 'success');
         }
@@ -613,7 +611,7 @@
             IntelHexParser = mod.IntelHexParser;
             modulesLoaded = true;
             log('✔ Modules loaded successfully', 'success');
-            log('Ready - Click "Connect Device" to start', 'info');
+            log('Ready - Fill in app details then click "Connect & Load"', 'info');
         } catch (e) {
             log(`❌ Failed to load modules: ${e.message}`, 'error');
             log('Make sure you are running from a local server (not file://)', 'warn');
@@ -673,10 +671,9 @@
         async function loadCatalogApp(app) {
             const statusEl = document.getElementById(`status-${app.id}`);
 
-            // Check device connection
-            if (!transport) {
-                log('❌ Please connect device first', 'error');
-                statusEl.textContent = '⚠ Connect device first';
+            // Check / establish device connection
+            if (!await ensureConnected()) {
+                statusEl.textContent = '⚠ Connection failed';
                 statusEl.style.color = 'var(--warning)';
                 return;
             }
@@ -822,40 +819,36 @@
 
         renderCatalog();
 
-        document.getElementById('connectBtn').onclick = async () => {
-            if (!modulesLoaded) { log('❌ Modules not loaded - cannot connect', 'error'); return; }
-            if (!navigator.hid) { log('❌ WebHID not supported', 'error'); return; }
-            
+        // ---- Shared connect helper ----
+        async function ensureConnected() {
+            if (transport) return true; // already connected
+            if (!modulesLoaded) { log('❌ Modules not loaded - cannot connect', 'error'); return false; }
+            if (!navigator.hid) { log('❌ WebHID not supported', 'error'); return false; }
             try {
-                log('Requesting device access...', 'info');
-                log('A popup should appear - select your Ledger device', 'info');
+                log('Requesting device access... (select your Ledger in the popup)', 'info');
                 transport = await TransportWebHID.request(true);
                 log('✔ Device connected!', 'success');
-                
                 document.getElementById('connectionStatus').textContent = 'Connected';
                 document.getElementById('connectionStatus').className = 'status connected';
-                document.getElementById('deviceInfo').style.display = 'block';
-                document.getElementById('connectBtn').disabled = true;
                 document.getElementById('disconnectBtn').disabled = false;
-                document.getElementById('loadBtn').disabled = false;
                 document.getElementById('deleteBtn').disabled = false;
                 document.getElementById('listBtn').disabled = false;
                 document.getElementById('pushCABtn').disabled = false;
                 document.getElementById('testCABtn').disabled = false;
+                return true;
             } catch (e) {
                 console.error('Connection error:', e);
                 log(`❌ Connection failed: ${e.message}`, 'error');
                 if (e.message.includes('No Ledger')) { log('Did you select a device in the popup?', 'warn'); }
+                return false;
             }
-        };
+        }
 
         document.getElementById('disconnectBtn').onclick = async () => {
             if (transport) { try { await transport.close(); } catch (e) { console.error('Close error:', e); } transport = null; }
             document.getElementById('connectionStatus').textContent = 'Disconnected';
             document.getElementById('connectionStatus').className = 'status disconnected';
-            document.getElementById('connectBtn').disabled = false;
             document.getElementById('disconnectBtn').disabled = true;
-            document.getElementById('loadBtn').disabled = true;
             document.getElementById('deleteBtn').disabled = true;
             document.getElementById('listBtn').disabled = true;
             document.getElementById('pushCABtn').disabled = true;
@@ -864,7 +857,7 @@
         };
 
         document.getElementById('loadBtn').onclick = async () => {
-            if (!transport) { log('❌ Please connect device first', 'error'); return; }
+            if (!await ensureConnected()) return;
             const appName = document.getElementById('appName').value.trim();
             if (!appName) { log('❌ App name is required', 'error'); return; }
 

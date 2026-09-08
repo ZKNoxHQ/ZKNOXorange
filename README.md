@@ -30,7 +30,7 @@ Open `sideloader.html` in Chrome/Edge 89+ (WebHID required).
 │   │   ├── app.map          # Linker map (dataSize, installParamsSize)
 │   │   ├── Makefile         # Build config (APPNAME, curves, paths)
 │   │   └── manifest.json    # SDK metadata (api_level)
-│   └── mldsa/
+│   └── ecmldsa/
 │       ├── app.hex
 │       ├── app.map
 │       ├── Makefile

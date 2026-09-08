@@ -1,6 +1,6 @@
 # ****************************************************************************
 #    ZKNOX
-#    (c) 2025.
+#    (c) 2026.
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -25,47 +25,39 @@ include $(BOLOS_SDK)/Makefile.target
 #        Mandatory configuration       #
 ########################################
 # Application name
-APPNAME = "MLDSA"
+APPNAME = "ECML-Signer"
 
 # Application version
 APPVERSION_M = 2
 APPVERSION_N = 3
-APPVERSION_P = 1
+APPVERSION_P = 2
 APPVERSION = "$(APPVERSION_M).$(APPVERSION_N).$(APPVERSION_P)"
 
 # Application source files
 APP_SOURCE_PATH += src
- 
-# Dilithium configuration
-DEFINES += DILITHIUM_MODE=2
-ETHDILITHIUM ?= 0
-DEFINES += ETHDILITHIUM=$(ETHDILITHIUM)
-
-APPNAME := MLDSA$(if $(filter 1,$(ETHDILITHIUM)),ETH)
-
-# Optimize for embedded
-
 
 # Application icons following guidelines:
 # https://developers.ledger.com/docs/embedded-app/design-requirements/#device-icon
-ICON_NANOX = icons/app_zknox_14px.gif
-ICON_NANOSP = icons/app_zknox_14px.gif
-ICON_STAX = icons/app_zknox_32px.gif
-ICON_FLEX = icons/app_zknox_40px.gif
-ICON_APEX_P = icons/app_zknox_32px_apex.png
+ICON_NANOX = icons/app_boilerplate_14px.gif
+ICON_NANOSP = icons/app_boilerplate_14px.gif
+ICON_STAX = icons/app_boilerplate_32px.gif
+ICON_FLEX = icons/app_boilerplate_40px.gif
+ICON_APEX_P = icons/app_boilerplate_32px_apex.png
 
 ifeq ($(TARGET_NAME),$(filter $(TARGET_NAME),TARGET_NANOX TARGET_NANOS2))
     # With the Nano NBGL Design, the Home Screen icon is the reverse of the App icon:
     # It should be on white background, with rounded corners.
     # This definition allows SDK Makefiles to automatically generate it based on the App icon.
     # Please note that the icon is dynamically generated, and declared in the .gitignore to avoid storing it.
-    ICON_HOME_NANO = glyphs/home_zknox_14px.gif
+    ICON_HOME_NANO = glyphs/home_boilerplate_14px.gif
 endif
 
 # Application allowed derivation curves.
 # Possibles curves are: secp256k1, secp256r1, ed25519 and bls12381g1
 # If your app needs it, you can specify multiple curves by using:
 # `CURVE_APP_LOAD_PARAMS = <curve1> <curve2>`
+# ed25519 is required by the SLIP-0010 mode used to derive the ML-DSA seed
+# (see src/ui/action/validate.c). Not used for on-curve signing.
 CURVE_APP_LOAD_PARAMS = secp256k1 ed25519
 
 # Application allowed derivation paths.
@@ -75,7 +67,7 @@ CURVE_APP_LOAD_PARAMS = secp256k1 ed25519
 # and SLIP-0044 standards.
 # If your app needs it, you can specify multiple path by using:
 # `PATH_APP_LOAD_PARAMS = "44'/1'" "45'/1'"`
-PATH_APP_LOAD_PARAMS = "44'/60'"   # purpose=coin(44) / coin_type=Testnet(1)
+PATH_APP_LOAD_PARAMS = "44'/60'" "44'/1'"   # Ethereum (60) + Testnet (1)
 
 # Setting to allow building variant applications
 # - <VARIANT_PARAM> is the name of the parameter which should be set
@@ -124,7 +116,7 @@ ENABLE_NBGL_QRCODE = 1
 ########################################
 # This is a smart documentation inclusion. The full documentation is available at https://ledgerhq.github.io/app-exchange/
 # --8<-- [start:variables]
-ifeq ($(APPNAME), "Boilerplate")
+ifeq ($(APPNAME), "ECML-Signer")
 # Two flags exist for enabling the SWAP
 #   - ENABLE_SWAP           will lead to the enabling of the swap related C code of the standard_app
 #                           AND will lead to the enabling of the APP_LOAD_PARAM required for os_lib_call working on device
@@ -144,6 +136,10 @@ endif
 ENABLE_TLV_LIBRARY = 1
 ENABLE_PKI_LIBRARY = 1
 
+########################################
+#        Stack protection features     #
+########################################
+ENABLE_STACK_PROTECTOR = 1
 
 ########################################
 #          Features disablers          #
@@ -152,6 +148,16 @@ ENABLE_PKI_LIBRARY = 1
 # default enabled in the SDK `Makefile.standard_app`.
 #DISABLE_STANDARD_APP_FILES = 1
 #DISABLE_DEFAULT_IO_SEPROXY_BUFFER_SIZE = 1 # To allow custom size declaration
+
+# Enlarge the APDU I/O buffer so ML-DSA-44 responses (pk 1312 B + sig 2420 B +
+# 4 length bytes = 3736 B) fit in a single response.
+DISABLE_DEFAULT_IO_SEPROXY_BUFFER_SIZE = 1
+DEFINES += CUSTOM_IO_APDU_BUFFER_SIZE=4096
+
+# ML-DSA is provided as source in lib_cxng/src (not exported via cx.export),
+# so pull the sources in and expose the internal headers.
+SDK_SOURCE_FILES += $(wildcard $(BOLOS_SDK)/lib_cxng/src/cx_mldsa*.c)
+INCLUDES_PATH += $(BOLOS_SDK)/lib_cxng/src
 #DISABLE_STANDARD_APP_DEFINES = 1 # Will set all the following disablers
 #DISABLE_STANDARD_SNPRINTF = 1
 #DISABLE_STANDARD_USB = 1

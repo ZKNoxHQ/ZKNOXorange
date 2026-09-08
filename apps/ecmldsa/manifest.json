@@ -1,4 +1,4 @@
 {
-    "api_level": 25,
+    "api_level": 26,
     "_comment": "api_level comes from the SDK, not the app Makefile. To find it: grep -r 'API_LEVEL' $BOLOS_SDK/ --include='Makefile*' | head"
 }

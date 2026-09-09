@@ -2,20 +2,33 @@
 
 Web-based sideloader for Ledger hardware wallets. Load custom applications onto your device directly from the browser using WebHID.
 
+This repository holds the **engine and the app catalog** (bundled JS + prebuilt
+`.hex` binaries). The **UI page lives in the [website repo](https://github.com/ZKNoxHQ/website)**
+as `sideloader.html`, so it shares the site's `styles.css` and `nav.js`. This repo
+is cloned into the website as `zknox-orange/`, and the page fetches everything
+from there.
+
 ## Quick Start
 
 ```bash
 npm install
 npm run build
-npm run serve        # http://localhost:8080
 ```
 
-Open `sideloader.html` in Chrome/Edge 89+ (WebHID required).
+Then serve it from the website checkout (this repo must be cloned inside it as
+`zknox-orange/`, see the website README):
+
+```bash
+cd /path/to/website
+python3 -m http.server 8080     # http://localhost:8080/sideloader.html
+```
+
+Chrome/Edge 89+ required (WebHID). The page must be served over HTTP — `file://`
+breaks both the module import and the root-relative `/nav.js`.
 
 ## Project Structure
 
 ```
-├── sideloader.html          # Main UI
 ├── src/                     # Source modules
 │   ├── index.js             # Entry point & exports
 │   ├── deployed.js          # SCP handshake (Secure Channel Protocol)
@@ -85,14 +98,15 @@ grep -r "API_LEVEL" $BOLOS_SDK/ --include="Makefile*" | head
 
 All apps compiled with the same SDK share the same `api_level`.
 
-#### 3. Register in `sideloader.html`
+#### 3. Register in the website's `sideloader.html`
 
-Find the `catalogApps` array in the `<script>` section and add an entry:
+The catalog lives in the website repo. Find the `catalogApps` array in the
+`<script type="module">` section of `sideloader.html` and add an entry:
 
 ```javascript
 const catalogApps = [
     // ... existing apps ...
-    { id: 'myapp', name: 'My App', icon: '🔧', desc: 'Short description', dir: 'apps/myapp', appFlags: 0 },
+    { id: 'myapp', name: 'My App', icon: '🔧', desc: 'Short description', dir: 'zknox-orange/apps/myapp', appFlags: 0 },
 ];
 ```
 
@@ -102,8 +116,9 @@ Fields:
 - `name` — display name on the card
 - `icon` — emoji shown on the card
 - `desc` — short description shown below the name
-- `dir` — path to the app directory (always `apps/{id}`)
+- `dir` — path to the app directory, relative to the website root (always `zknox-orange/apps/{id}`)
 - `appFlags` — app flags value (typically `0`, see SDK `include/appflags.h`)
+- `frontUrl` — optional link to the app's companion web front-end
 
 #### 4. Makefile requirements
 

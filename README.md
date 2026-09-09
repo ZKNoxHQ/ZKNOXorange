@@ -25,7 +25,7 @@ Open `sideloader.html` in Chrome/Edge 89+ (WebHID required).
 ├── dist/
 │   └── ledgerjs.bundle.js   # Built bundle (esbuild)
 ├── apps/                    # ZKNOX Apps Catalog
-│   ├── frostgun/
+│   ├── privacy/
 │   │   ├── app.hex          # Compiled application binary
 │   │   ├── app.map          # Linker map (dataSize, installParamsSize)
 │   │   ├── Makefile         # Build config (APPNAME, curves, paths)

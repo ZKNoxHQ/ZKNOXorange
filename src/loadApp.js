@@ -1,4 +1,4 @@
-import { hashes, utils } from '../node_modules/@noble/secp256k1/index.js';
+import { hashes, utils } from '@noble/secp256k1';
 import { PrivateKey, bytesToHex, hexToBytes } from './ecWrapper.js';
 import { IntelHexParser, IntelHexPrinter } from './hexParser.js';
 import { BOLOS_TAG_APPNAME, BOLOS_TAG_APPVERSION, BOLOS_TAG_DEPENDENCY, BOLOS_TAG_DERIVEPATH, BOLOS_TAG_ICON, HexLoader, encodelv, encodetlv } from './hexLoader.js';

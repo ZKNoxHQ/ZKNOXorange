@@ -39,3 +39,5 @@
 
 - Port initial de ledgerblue Python vers JavaScript
 - AES custom, SCP v2/v3, WebHID transport
+
+- 2026-09-16: src/loadApp.js importe @noble/secp256k1 par nom de paquet au lieu de ../node_modules/ (bundle inchangé)

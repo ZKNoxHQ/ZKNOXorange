@@ -30,6 +30,10 @@ breaks both the module import and the root-relative `/nav.js`.
 
 ```
 ├── src/                     # Source modules
+│   ├── catalog.js           # Catalog artifact resolution (local dir or GitHub raw)
+│   ├── apduScript.js        # Offline load script (app.apdu) parser + SCP replay
+│   ├── device.js            # getDeviceInfo: targetId / SE version from the dashboard
+│   ├── transportBle.js      # Web Bluetooth transport (Nano X, Stax, Flex)
 │   ├── index.js             # Entry point & exports
 │   ├── deployed.js          # SCP handshake (Secure Channel Protocol)
 │   ├── ecWrapper.js         # ECDSA / secp256k1 wrapper
@@ -39,16 +43,26 @@ breaks both the module import and the root-relative `/nav.js`.
 │   └── ledgerjs.bundle.js   # Built bundle (esbuild)
 ├── apps/                    # ZKNOX Apps Catalog
 │   ├── privacy/
-│   │   ├── app.hex          # Compiled application binary
-│   │   ├── app.map          # Linker map (dataSize, installParamsSize)
-│   │   ├── Makefile         # Build config (APPNAME, curves, paths)
-│   │   └── manifest.json    # SDK metadata (api_level)
-│   └── ecmldsa/
-│       ├── app.hex
-│       ├── app.map
-│       ├── Makefile
-│       └── manifest.json
+│   │   └── README.md        # app.apdu replayed from ZKNoxHQ/ZKNOX-HW-PRIVACY (layout `repo`)
+│   └── ecmldsa/             # Local layout (`dir`)
+│       ├── app.hex          # Compiled application binary
+│       ├── app.map          # Linker map (dataSize, installParamsSize)
+│       ├── Makefile         # Build config (APPNAME, curves, paths)
+│       └── manifest.json    # SDK metadata (api_level)
 └── package.json
+```
+
+## Bluetooth
+
+`TransportWebBLE.request()` opens the browser's Bluetooth chooser filtered on
+the Ledger GATT services (Nano X, Stax, Flex) and returns a transport with the
+same interface as `TransportWebHID`, so `loadApp`, `replayApduScript` and
+`getDeviceInfo` take either. Web Bluetooth needs Chrome or Edge and a secure
+context (https or localhost); the device must be on the dashboard with
+Bluetooth enabled, and the first connection pairs it (confirm on the device).
+
+```javascript
+const transport = await TransportWebBLE.request();
 ```
 
 ## ZKNOX Apps Catalog
@@ -69,7 +83,54 @@ The catalog lets users install pre-built apps in one click. Clicking a card fetc
 
 ### Adding an app to the catalog
 
-#### 1. Create the app directory
+Two layouts. Prefer `repo`: the build output stays in the firmware repository,
+one entry covers every device, and `ref` identifies the exact build served.
+
+#### Layout `repo` (offline load script replayed from the firmware repository)
+
+The Ledger SDK writes an offline load script, `build/<target>/bin/app.apdu`,
+on every build: the exact loader conversation `make load` would have, one
+plaintext APDU per line, with targetId, `api_level`, section sizes and flags
+already baked in. The firmware repository commits it per target; the
+sideloader fetches it and replays it over its own SCP channel
+(`replayApduScript`). No rebuild, no hex/map/Makefile parsing.
+
+Register the entry in `sideloader.html`:
+
+```javascript
+const catalogApps = [
+    // ... existing apps ...
+    { id: 'privacy', name: 'ZKNOX Privacy', icon: '🛡️', desc: 'EdDSA-Poseidon + FROST',
+      repo: 'ZKNoxHQ/ZKNOX-HW-PRIVACY', ref: '5a77ad65a0f04144343adfb6906383b6645af9e3' },
+];
+```
+
+Install:
+
+```javascript
+import { fetchCatalogApp, replayApduScript } from './zknox-orange/dist/ledgerjs.bundle.js';
+const { targetId, apdu, info } = await fetchCatalogApp(entry, null, dongle); // targetId read from the device
+await replayApduScript(dongle, apdu, { targetId, onProgress: ({ index, total }) => { /* progress bar */ } });
+```
+
+`fetchCatalogApp` reads the `targetId` from the device (`getDeviceInfo`:
+GET_VERSION on the dashboard, so the user must not be inside an app) and
+resolves `<target>` from it (`nanos2`, `nanox`, `stax`, `flex`). One card
+serves every model; no per-device button. `appFlags`, curves and paths are not
+read from the catalog entry for this layout: they are in the script.
+
+Fields:
+
+- `repo` — `owner/name` on GitHub
+- `ref` — branch, tag or commit SHA; pin a SHA for anything served to users
+- `binDir` — optional, default `build/{target}/bin`
+
+Caveat: the script does not say whether it comes from a `MODE=prod` or
+`MODE=debug` build. Only commit `build/<target>/bin/` from `MODE=prod`.
+
+#### Layout `dir` (artifacts committed next to the sideloader)
+
+##### 1. Create the app directory
 
 ```
 apps/myapp/
@@ -81,7 +142,7 @@ apps/myapp/
 
 Copy `app.hex` and `app.map` from your build output. Copy the `Makefile` from your app source.
 
-#### 2. Create `manifest.json`
+##### 2. Create `manifest.json`
 
 ```json
 {
@@ -98,10 +159,7 @@ grep -r "API_LEVEL" $BOLOS_SDK/ --include="Makefile*" | head
 
 All apps compiled with the same SDK share the same `api_level`.
 
-#### 3. Register in the website's `sideloader.html`
-
-The catalog lives in the website repo. Find the `catalogApps` array in the
-`<script type="module">` section of `sideloader.html` and add an entry:
+##### 3. Register in the website's `sideloader.html`
 
 ```javascript
 const catalogApps = [
@@ -110,17 +168,17 @@ const catalogApps = [
 ];
 ```
 
-Fields:
+Common fields:
 
-- `id` — unique identifier, must match the directory name under `apps/`
+- `id` — unique identifier
 - `name` — display name on the card
 - `icon` — emoji shown on the card
 - `desc` — short description shown below the name
-- `dir` — path to the app directory, relative to the website root (always `zknox-orange/apps/{id}`)
+- `dir` — path to the app directory, relative to the website root (`zknox-orange/apps/{id}`)
 - `appFlags` — app flags value (typically `0`, see SDK `include/appflags.h`)
 - `frontUrl` — optional link to the app's companion web front-end
 
-#### 4. Makefile requirements
+#### Makefile requirements
 
 The parser reads these variables from the Makefile:
 
@@ -137,7 +195,7 @@ Lines containing Make expressions (`$(...)`) are ignored — only simple assignm
 
 ### Updating an app
 
-Replace `app.hex` and `app.map` with the new build artifacts. If the SDK version changed, update `api_level` in `manifest.json`. The Makefile is re-parsed on every install, so changes to curves, paths, or version take effect immediately.
+Layout `repo`: bump `ref`. Layout `dir`: replace `app.hex` and `app.map` with the new build artifacts. If the SDK version changed, update `api_level` in `manifest.json`. The Makefile is re-parsed on every install, so changes to curves, paths, or version take effect immediately.
 
 ## Usage
 

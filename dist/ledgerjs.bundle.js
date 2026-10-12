@@ -3317,25 +3317,445 @@ async function getMemInfo(dongle, targetId, rootPrivateKey = null) {
   const loader = new HexLoader(dongle, 224, true, secret);
   return await loader.getMemInfo();
 }
+
+// src/device.js
+var TARGET_NAMES = Object.fromEntries(
+  Object.entries(TARGET_IDS).map(([name, id]) => [id, name])
+);
+function readLv(buf, pos) {
+  const len = buf[pos];
+  return { value: buf.slice(pos + 1, pos + 1 + len), next: pos + 1 + len };
+}
+async function getDeviceInfo(dongle) {
+  const apdu = new Uint8Array([224, 1, 0, 0, 0]);
+  let data;
+  try {
+    data = await dongle.exchange(apdu);
+  } catch (e) {
+    throw new Error(`GET_VERSION refused (${e.message}): quit the running app and stay on the dashboard`);
+  }
+  if (data.length < 5) {
+    throw new Error("GET_VERSION: response too short, is the device on the dashboard?");
+  }
+  const targetId = (data[0] << 24 | data[1] << 16 | data[2] << 8 | data[3]) >>> 0;
+  const dec = new TextDecoder();
+  let pos = 4;
+  const se = readLv(data, pos);
+  pos = se.next;
+  let flags = new Uint8Array(0);
+  let mcu = new Uint8Array(0);
+  if (pos < data.length) {
+    const f = readLv(data, pos);
+    flags = f.value;
+    pos = f.next;
+  }
+  if (pos < data.length) {
+    const m = readLv(data, pos);
+    mcu = m.value;
+    pos = m.next;
+  }
+  return {
+    targetId,
+    targetName: TARGET_NAMES[targetId] || null,
+    seVersion: dec.decode(se.value),
+    mcuVersion: dec.decode(mcu),
+    flags
+  };
+}
+
+// src/apduScript.js
+var CMD_DELETE_APP = 12;
+var CMD_CREATE_APP = 11;
+var CMD_LOAD = 6;
+function parseApduScript(text) {
+  const apdus = [];
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line === "" || line.startsWith("#")) continue;
+    if (!/^[0-9a-fA-F]+$/.test(line) || line.length % 2 !== 0) {
+      throw new Error(`app.apdu line ${i + 1}: not hex`);
+    }
+    const bytes = hexToBytes2(line);
+    if (bytes.length < 5) throw new Error(`app.apdu line ${i + 1}: too short`);
+    const [cla, ins, p1, p2, lc] = bytes;
+    const data = bytes.slice(5);
+    if (cla !== 224 || ins !== 0 || p1 !== 0 || p2 !== 0) {
+      throw new Error(`app.apdu line ${i + 1}: not a loader APDU (${bytesToHex3(bytes.slice(0, 4))})`);
+    }
+    if (lc !== data.length) {
+      throw new Error(`app.apdu line ${i + 1}: Lc=${lc} but ${data.length} data bytes`);
+    }
+    apdus.push({ cla, ins, p1, p2, data });
+  }
+  if (apdus.length === 0) throw new Error("app.apdu: empty script");
+  return apdus;
+}
+function describeApduScript(apdus) {
+  let appName = null;
+  let loadChunks = 0;
+  let loadBytes = 0;
+  let hasCreate = false;
+  for (const { data } of apdus) {
+    switch (data[0]) {
+      case CMD_DELETE_APP:
+        appName = new TextDecoder().decode(data.slice(2, 2 + data[1]));
+        break;
+      case CMD_CREATE_APP:
+        hasCreate = true;
+        break;
+      case CMD_LOAD:
+        loadChunks++;
+        loadBytes += data.length - 3;
+        break;
+      default:
+        break;
+    }
+  }
+  if (!hasCreate) throw new Error("app.apdu: no createApp command, not a load script");
+  return { appName, loadChunks, loadBytes, apdus: apdus.length };
+}
+async function replayApduScript(dongle, text, options = {}) {
+  let {
+    targetId = null,
+    rootPrivateKey: rootPrivateKeyOption = null,
+    delete: deleteFirst = true,
+    onProgress = null,
+    debug = false
+  } = options;
+  if (targetId === null) targetId = (await getDeviceInfo(dongle)).targetId;
+  const apdus = parseApduScript(text);
+  const info = describeApduScript(apdus);
+  let rootPrivateKey;
+  if (rootPrivateKeyOption === null) {
+    rootPrivateKey = new PrivateKey().getPrivateKeyBytes();
+  } else {
+    rootPrivateKey = typeof rootPrivateKeyOption === "string" ? hexToBytes2(rootPrivateKeyOption) : rootPrivateKeyOption;
+  }
+  if (debug) console.log(`replayApduScript: ${info.appName} ${info.apdus} APDUs, ${info.loadBytes}B in ${info.loadChunks} chunks`);
+  const secret = await getDeployedSecretV2(dongle, rootPrivateKey, targetId);
+  const loader = new HexLoader(dongle, 224, true, secret, true, null);
+  for (let i = 0; i < apdus.length; i++) {
+    const { cla, ins, p1, p2, data } = apdus[i];
+    const cmd = data[0];
+    if (onProgress) onProgress({ index: i, total: apdus.length, cmd });
+    if (cmd === CMD_DELETE_APP) {
+      if (!deleteFirst) continue;
+      try {
+        await loader.exchange(cla, ins, p1, p2, data);
+      } catch (e) {
+        if (debug) console.log(`delete failed (may not exist): ${e.message}`);
+      }
+      continue;
+    }
+    await loader.exchange(cla, ins, p1, p2, data);
+  }
+  return info;
+}
+
+// src/catalog.js
+var TARGET_DIRS = {
+  [TARGET_IDS.NANO_S_PLUS]: "nanos2",
+  [TARGET_IDS.NANO_X]: "nanox",
+  [TARGET_IDS.STAX]: "stax",
+  [TARGET_IDS.FLEX]: "flex"
+  // Apex P: ZKNOX-HW-PRIVACY ships build/apex_p/, but its targetId is not in
+  // TARGET_IDS yet. Add TARGET_IDS.APEX_P from the SDK's Makefile.target and
+  // map it here.
+};
+var DIR_ARTIFACT_FILES = ["app.hex", "app.map", "Makefile", "manifest.json"];
+function targetDir(targetId) {
+  const dir = TARGET_DIRS[targetId];
+  if (!dir) {
+    throw new Error(`Unsupported targetId 0x${targetId.toString(16)}: no build directory known`);
+  }
+  return dir;
+}
+function rawBase(entry) {
+  const ref = entry.ref || "main";
+  return `https://raw.githubusercontent.com/${entry.repo}/${ref}`;
+}
+function resolveCatalogFiles(entry, targetId) {
+  if (entry.repo) {
+    const bin = `${rawBase(entry)}/${entry.binDir || "build/{target}/bin"}`.replace("{target}", targetDir(targetId));
+    return { "app.apdu": `${bin}/app.apdu` };
+  }
+  if (entry.dir) {
+    return Object.fromEntries(DIR_ARTIFACT_FILES.map((f) => [f, `${entry.dir}/${f}`]));
+  }
+  throw new Error(`Catalog entry '${entry.id}' has neither 'repo' nor 'dir'`);
+}
+async function fetchText(url) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) {
+    throw new Error(`${url}: HTTP ${r.status}`);
+  }
+  return r.text();
+}
+async function fetchCatalogApp(entry, targetId = null, dongle = null) {
+  if (targetId === null) {
+    if (dongle === null) throw new Error("fetchCatalogApp: targetId or dongle required");
+    targetId = (await getDeviceInfo(dongle)).targetId;
+  }
+  const urls = resolveCatalogFiles(entry, targetId);
+  if (entry.repo) {
+    const apdu = await fetchText(urls["app.apdu"]);
+    const info = describeApduScript(parseApduScript(apdu));
+    return { layout: "repo", apdu, info, urls, targetId };
+  }
+  const [hex, map, makefile, manifestText] = await Promise.all([
+    fetchText(urls["app.hex"]),
+    fetchText(urls["app.map"]),
+    fetchText(urls["Makefile"]),
+    fetchText(urls["manifest.json"])
+  ]);
+  return { layout: "dir", hex, map, makefile, manifest: JSON.parse(manifestText), urls, targetId };
+}
+
+// src/transportBle.js
+var DEFAULT_TIMEOUT2 = 3e4;
+var TAG_APDU = 5;
+var TAG_MTU = 8;
+function ledgerUuid(model, idx) {
+  return `13d63400-2c97-${model}-000${idx}-4c6564676572`;
+}
+var BLE_MODELS = [
+  { name: "NANO_X", service: ledgerUuid("0004", 0), notify: ledgerUuid("0004", 1), write: ledgerUuid("0004", 2), writeCmd: ledgerUuid("0004", 3) },
+  { name: "STAX", service: ledgerUuid("6004", 0), notify: ledgerUuid("6004", 1), write: ledgerUuid("6004", 2), writeCmd: ledgerUuid("6004", 3) },
+  { name: "FLEX", service: ledgerUuid("3004", 0), notify: ledgerUuid("3004", 1), write: ledgerUuid("3004", 2), writeCmd: ledgerUuid("3004", 3) }
+];
+function bytesToHex6(bytes) {
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+var TransportWebBLE = class _TransportWebBLE {
+  constructor(device, debug = false) {
+    this.device = device;
+    this.debug = debug;
+    this.opened = false;
+    this.model = null;
+    this.server = null;
+    this.notifyChar = null;
+    this.writeChar = null;
+    this.writeCmdChar = null;
+    this.mtu = 20;
+    this._queue = [];
+    this._waiter = null;
+    this._onNotify = this._onNotify.bind(this);
+    this._onDisconnect = this._onDisconnect.bind(this);
+  }
+  static isSupported() {
+    return typeof navigator !== "undefined" && !!navigator.bluetooth;
+  }
+  async open() {
+    if (this.opened) return;
+    this.server = await this.device.gatt.connect();
+    this.device.addEventListener("gattserverdisconnected", this._onDisconnect);
+    let service = null;
+    for (const m of BLE_MODELS) {
+      try {
+        service = await this.server.getPrimaryService(m.service);
+        this.model = m;
+        break;
+      } catch (e) {
+      }
+    }
+    if (!service) throw new CommException("No Ledger BLE service found on this device");
+    this.notifyChar = await service.getCharacteristic(this.model.notify);
+    this.writeChar = await service.getCharacteristic(this.model.write);
+    try {
+      this.writeCmdChar = await service.getCharacteristic(this.model.writeCmd);
+    } catch (e) {
+      this.writeCmdChar = null;
+    }
+    this.notifyChar.addEventListener("characteristicvaluechanged", this._onNotify);
+    await this.notifyChar.startNotifications();
+    this.opened = true;
+    await this._inferMtu();
+    if (this.debug) console.log(`BLE: ${this.model.name} connected, mtu=${this.mtu}`);
+  }
+  async close() {
+    if (!this.opened) return;
+    this.opened = false;
+    try {
+      this.notifyChar.removeEventListener("characteristicvaluechanged", this._onNotify);
+    } catch (e) {
+    }
+    try {
+      await this.notifyChar.stopNotifications();
+    } catch (e) {
+    }
+    this.device.removeEventListener("gattserverdisconnected", this._onDisconnect);
+    if (this.device.gatt.connected) this.device.gatt.disconnect();
+  }
+  _onDisconnect() {
+    this.opened = false;
+    if (this._waiter) {
+      const w = this._waiter;
+      this._waiter = null;
+      clearTimeout(w.timeoutId);
+      w.reject(new CommException("BLE device disconnected"));
+    }
+  }
+  _onNotify(event) {
+    const value = new Uint8Array(event.target.value.buffer);
+    if (this.debug) console.log("BLE <= frame " + bytesToHex6(value));
+    if (this._waiter) {
+      const w = this._waiter;
+      this._waiter = null;
+      clearTimeout(w.timeoutId);
+      w.resolve(value);
+    } else {
+      this._queue.push(value);
+    }
+  }
+  _nextFrame(timeout) {
+    if (this._queue.length) return Promise.resolve(this._queue.shift());
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this._waiter = null;
+        reject(new CommException("Timeout waiting for BLE notification"));
+      }, timeout);
+      this._waiter = { resolve, reject, timeoutId };
+    });
+  }
+  async _writeFrame(frame) {
+    if (this.debug) console.log("BLE => frame " + bytesToHex6(frame));
+    if (this.writeCmdChar) {
+      await this.writeCmdChar.writeValueWithoutResponse(frame);
+    } else {
+      await this.writeChar.writeValueWithResponse(frame);
+    }
+  }
+  async _inferMtu() {
+    this._queue.length = 0;
+    await this._writeFrame(new Uint8Array([TAG_MTU, 0, 0, 0, 0]));
+    const frame = await this._nextFrame(5e3);
+    if (frame[0] !== TAG_MTU || frame.length < 6) {
+      throw new CommException("Unexpected MTU response " + bytesToHex6(frame));
+    }
+    const mtu = frame[5];
+    if (mtu > this.mtu) this.mtu = mtu;
+  }
+  async _sendApdu(apdu) {
+    let offset = 0;
+    let seq = 0;
+    while (offset < apdu.length || seq === 0) {
+      const header = seq === 0 ? 5 : 3;
+      const chunkLen = Math.min(this.mtu - header, apdu.length - offset);
+      const frame = new Uint8Array(header + chunkLen);
+      frame[0] = TAG_APDU;
+      frame[1] = seq >> 8 & 255;
+      frame[2] = seq & 255;
+      if (seq === 0) {
+        frame[3] = apdu.length >> 8 & 255;
+        frame[4] = apdu.length & 255;
+      }
+      frame.set(apdu.slice(offset, offset + chunkLen), header);
+      await this._writeFrame(frame);
+      offset += chunkLen;
+      seq++;
+    }
+  }
+  async _receiveApdu(timeout) {
+    let expected = -1;
+    let received = new Uint8Array(0);
+    let seq = 0;
+    while (expected < 0 || received.length < expected) {
+      const frame = await this._nextFrame(timeout);
+      if (frame[0] !== TAG_APDU) {
+        continue;
+      }
+      const idx = frame[1] << 8 | frame[2];
+      if (idx !== seq) throw new CommException(`BLE sequence error: got ${idx}, expected ${seq}`);
+      let payload;
+      if (idx === 0) {
+        expected = frame[3] << 8 | frame[4];
+        payload = frame.slice(5);
+      } else {
+        payload = frame.slice(3);
+      }
+      const merged = new Uint8Array(received.length + payload.length);
+      merged.set(received);
+      merged.set(payload, received.length);
+      received = merged;
+      seq++;
+    }
+    return received.slice(0, expected);
+  }
+  async exchangeRaw(apdu, timeout = DEFAULT_TIMEOUT2) {
+    if (!this.opened) throw new CommException("Device not opened");
+    if (this.debug) console.log("BLE => " + bytesToHex6(apdu));
+    this._queue.length = 0;
+    await this._sendApdu(apdu);
+    const response = await this._receiveApdu(timeout);
+    if (response.length < 2) throw new CommException("Response too short");
+    const swOffset = response.length - 2;
+    const sw = response[swOffset] << 8 | response[swOffset + 1];
+    const data = response.slice(0, swOffset);
+    if (this.debug) console.log("BLE <= " + bytesToHex6(data) + " SW=" + sw.toString(16).padStart(4, "0"));
+    return { data, sw };
+  }
+  async exchange(apdu, timeout = DEFAULT_TIMEOUT2) {
+    const { data, sw } = await this.exchangeRaw(apdu, timeout);
+    if (sw !== 36864 && (sw & 65280) !== 24832 && (sw & 65280) !== 27648) {
+      throw new CommException(`Invalid status ${sw.toString(16).padStart(4, "0")} (${getPossibleErrorCause(sw)})`, sw, data);
+    }
+    return data;
+  }
+  apduMaxDataSize() {
+    return 255;
+  }
+  // Opens the browser's Bluetooth chooser filtered on Ledger services.
+  static async request(debug = false) {
+    if (!_TransportWebBLE.isSupported()) {
+      throw new CommException("Web Bluetooth not supported in this browser (Chrome/Edge, https or localhost)");
+    }
+    const services = BLE_MODELS.map((m) => m.service);
+    let device;
+    try {
+      device = await navigator.bluetooth.requestDevice({
+        filters: services.map((s) => ({ services: [s] })),
+        optionalServices: services
+      });
+    } catch (e) {
+      throw new CommException("No Ledger selected in the Bluetooth chooser (" + e.message + ")");
+    }
+    const transport = new _TransportWebBLE(device, debug);
+    await transport.open();
+    return transport;
+  }
+};
 export {
+  BLE_MODELS,
   CURVES,
+  DIR_ARTIFACT_FILES,
   HexLoader,
   IntelHexParser,
   IntelHexPrinter,
   PrivateKey,
   PublicKey,
+  TARGET_DIRS,
   TARGET_IDS,
+  TARGET_NAMES,
   TransportMock,
+  TransportWebBLE,
   TransportWebHID,
   bytesToHex3 as bytesToHex,
   deleteApp,
+  describeApduScript,
+  fetchCatalogApp,
   getDeployedSecretV1,
   getDeployedSecretV2,
+  getDeviceInfo,
   getMemInfo,
   hexToBytes2 as hexToBytes,
   listApps,
   loadApp,
-  parseBip32Path
+  parseApduScript,
+  parseBip32Path,
+  replayApduScript,
+  resolveCatalogFiles,
+  targetDir
 };
 /*! Bundled license information:
 

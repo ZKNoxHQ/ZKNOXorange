@@ -1,6 +1,28 @@
-# ZKNOX Orange v2.0.0
+# ZKNOX Orange v2.1.0
 
 ## Changelog
+
+### v2.1.0 - 2026-10-12 - "Catalogue distant"
+
+**Catalogue : replay du script `app.apdu` du dépôt firmware**
+
+- `src/apduScript.js` (nouveau) : `parseApduScript`, `describeApduScript`, `replayApduScript(dongle, text, { targetId, rootPrivateKey, delete, onProgress })`
+  - rejoue le script hors-ligne du SDK (CLA E0, INS 00) ligne à ligne via `HexLoader.exchange`, donc sous SCP
+  - chunks LOAD de 208 octets du SDK = ceux de `HexLoader.load` (238 octets emballés ≤ MTU 0xFE)
+  - échec du `deleteApp` initial toléré (app absente)
+- `src/catalog.js` (nouveau) : `resolveCatalogFiles`, `fetchCatalogApp`, `TARGET_DIRS`
+  - entrée `{ repo, ref }` → `https://raw.githubusercontent.com/<repo>/<ref>/build/<target>/bin/app.apdu`, `<target>` dérivé du `targetId` (nanos2, nanox, stax, flex)
+  - entrée `{ dir }` (hex/map/Makefile/manifest) toujours supportée
+- `src/device.js` (nouveau) : `getDeviceInfo(dongle)` → `{ targetId, targetName, seVersion, mcuVersion }` via GET_VERSION (E0 01) sur le dashboard ; `fetchCatalogApp(entry, null, dongle)` et `replayApduScript` sans `targetId` l'appellent, une seule carte pour tous les modèles
+- `src/transportBle.js` (nouveau) : `TransportWebBLE` (Web Bluetooth) pour Nano X / Stax / Flex, même interface que `TransportWebHID` (`open`, `close`, `exchange`, `exchangeRaw`, `request`)
+  - services GATT `13d63400-2c97-{0004,6004,3004}-0000-4c6564676572`, caractéristiques notify / write / writeCmd
+  - trames tag 0x05, seq 2 octets BE, longueur sur la première ; MTU négocié par la trame 0x08
+  - validé avec un GATT mock (Flex, MTU 156, APDU de 216 octets fragmentée puis réassemblée)
+- `src/index.js` : exports des quatre modules
+- `apps/privacy/` : `app.hex`, `app.map`, `Makefile`, `manifest.json` supprimés, remplacés par un README ; la source est ZKNoxHQ/ZKNOX-HW-PRIVACY `build/<target>/bin/app.apdu`
+- `README.md` : section catalogue (layout `repo`)
+- `package.json` : 2.1.0
+- Validé hors device : les 5 scripts commités (nanos2, nanox, stax, flex, apex_p) se parsent, `appName=ZKNOX`
 
 ### v2.0.0 - 2025-02-18 - "Option Propre"
 

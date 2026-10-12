@@ -31,3 +31,25 @@
 **Décision**: Migration directe, pas de shim de compatibilité.
 
 **Raison**: Pas besoin de supporter les deux versions simultanément.
+
+## ADR-004: Catalogue : replay du script hors-ligne `app.apdu` du dépôt firmware
+
+**Contexte**: `apps/privacy/` contenait une copie manuelle d'un seul `app.hex` (Nano S+) de ZKNOX-HW-PRIVACY, sans lien vers le commit firmware. ZKNOX-HW-PRIVACY commite `build/<target>/bin/{app.apdu,app.elf}` pour cinq cibles, pas de hex ni de map, et on ne veut pas rebuild.
+
+**Décision**: Le catalogue référence le dépôt firmware (`repo` + `ref`) ; le sideloader récupère `build/<target>/bin/app.apdu` sur raw.githubusercontent.com et le rejoue tel quel sous son propre canal SCP (`replayApduScript`), `<target>` dérivé du `targetId` du device.
+
+**Raison**:
+- zéro rebuild, zéro parsing : targetId, api_level, tailles de sections, flags et chunks sont ceux que le SDK a figés au build
+- une seule source de vérité, un `ref` épinglable (SHA) qui identifie exactement le binaire servi
+- multi-device sans dupliquer de binaires ici
+- le script hors-ligne est en clair (pas de SCP) : `HexLoader.exchange` l'emballe exactement comme ledgerblue l'aurait fait en ligne
+
+**Alternatives écartées**:
+- parser `app.elf` en JS pour reconstituer hex + tailles : un parseur ELF de plus dans le bundle pour retrouver ce que le script contient déjà
+- exiger hex/map/manifest côté firmware : impose un rebuild et une convention de plus
+
+**Compromis**:
+- le script ne dit pas s'il vient d'un build `prod` ou `debug` ; seule la discipline de commit côté firmware le garantit
+- `appFlags` du catalogue ignoré pour ce layout (figé dans le createApp du script)
+- dépendance à raw.githubusercontent.com (CORS `*`, pas de SLA) ; le layout `dir` reste pour un miroir local
+- `ref: 'main'` n'est pas reproductible ; développement seulement

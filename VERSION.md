@@ -1,6 +1,16 @@
-# ZKNOX Orange v2.1.0
+# ZKNOX Orange v2.2.0
 
 ## Changelog
+
+### v2.2.0 - 2026-10-13 - "Profils prod/dev"
+
+- `src/catalog.js` : layout `repo` suit la nouvelle arborescence de ZKNOX-HW-PRIVACY `build/<profile>/<target>/app.apdu`
+  - champ d'entrée `profile` (`prod` par défaut, `dev` = MODE=debug FROST=1), `binDir` par défaut `build/{profile}/{target}`
+  - lecture de `artifact-manifest.txt` (mode, frost, commit, elf_sha256) ; un build `debug` est refusé sauf `profile: 'dev'`
+  - `parseArtifactManifest` exporté ; `fetchCatalogApp` renvoie `manifest` et `profile`
+- `README.md`, `apps/privacy/README.md` : mis à jour
+- `package.json` : 2.2.0
+
 
 ### v2.1.0 - 2026-10-12 - "Catalogue distant"
 

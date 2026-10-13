@@ -88,12 +88,13 @@ one entry covers every device, and `ref` identifies the exact build served.
 
 #### Layout `repo` (offline load script replayed from the firmware repository)
 
-The Ledger SDK writes an offline load script, `build/<target>/bin/app.apdu`,
-on every build: the exact loader conversation `make load` would have, one
-plaintext APDU per line, with targetId, `api_level`, section sizes and flags
-already baked in. The firmware repository commits it per target; the
-sideloader fetches it and replays it over its own SCP channel
-(`replayApduScript`). No rebuild, no hex/map/Makefile parsing.
+The Ledger SDK writes an offline load script, `app.apdu`, on every build: the
+exact loader conversation `make load` would have, one plaintext APDU per line,
+with targetId, `api_level`, section sizes and flags already baked in. The
+firmware repository commits it as `build/<profile>/<target>/app.apdu`
+(`prod`: MODE=prod FROST=0; `dev`: MODE=debug FROST=1) beside an
+`artifact-manifest.txt`; the sideloader fetches it and replays it over its
+own SCP channel (`replayApduScript`). No rebuild, no hex/map/Makefile parsing.
 
 Register the entry in `sideloader.html`:
 
@@ -101,7 +102,7 @@ Register the entry in `sideloader.html`:
 const catalogApps = [
     // ... existing apps ...
     { id: 'privacy', name: 'ZKNOX Privacy', icon: '🛡️', desc: 'EdDSA-Poseidon + FROST',
-      repo: 'ZKNoxHQ/ZKNOX-HW-PRIVACY', ref: '5a77ad65a0f04144343adfb6906383b6645af9e3' },
+      repo: 'ZKNoxHQ/ZKNOX-HW-PRIVACY', ref: 'e3fd460bdaaa8f3b87c1f111b9eb9b94de88eabb', profile: 'prod' },
 ];
 ```
 
@@ -123,10 +124,11 @@ Fields:
 
 - `repo` — `owner/name` on GitHub
 - `ref` — branch, tag or commit SHA; pin a SHA for anything served to users
-- `binDir` — optional, default `build/{target}/bin`
+- `profile` — `prod` (default) or `dev`; a `dev` build is refused unless the entry says so
+- `binDir` — optional, default `build/{profile}/{target}`
 
-Caveat: the script does not say whether it comes from a `MODE=prod` or
-`MODE=debug` build. Only commit `build/<target>/bin/` from `MODE=prod`.
+`fetchCatalogApp` also returns the parsed `artifact-manifest.txt` (`mode`,
+`frost`, `commit`, `elf_sha256`) when the repository ships one.
 
 #### Layout `dir` (artifacts committed next to the sideloader)
 

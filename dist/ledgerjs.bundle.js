@@ -3477,8 +3477,9 @@ function rawBase(entry) {
 }
 function resolveCatalogFiles(entry, targetId) {
   if (entry.repo) {
-    const bin = `${rawBase(entry)}/${entry.binDir || "build/{target}/bin"}`.replace("{target}", targetDir(targetId));
-    return { "app.apdu": `${bin}/app.apdu` };
+    const profile = entry.profile || "prod";
+    const bin = `${rawBase(entry)}/${entry.binDir || "build/{profile}/{target}"}`.replace("{profile}", profile).replace("{target}", targetDir(targetId));
+    return { "app.apdu": `${bin}/app.apdu`, "artifact-manifest.txt": `${bin}/artifact-manifest.txt` };
   }
   if (entry.dir) {
     return Object.fromEntries(DIR_ARTIFACT_FILES.map((f) => [f, `${entry.dir}/${f}`]));
@@ -3492,6 +3493,14 @@ async function fetchText(url) {
   }
   return r.text();
 }
+function parseArtifactManifest(text) {
+  const out = {};
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (m) out[m[1]] = m[2];
+  }
+  return out;
+}
 async function fetchCatalogApp(entry, targetId = null, dongle = null) {
   if (targetId === null) {
     if (dongle === null) throw new Error("fetchCatalogApp: targetId or dongle required");
@@ -3499,9 +3508,19 @@ async function fetchCatalogApp(entry, targetId = null, dongle = null) {
   }
   const urls = resolveCatalogFiles(entry, targetId);
   if (entry.repo) {
+    const profile = entry.profile || "prod";
     const apdu = await fetchText(urls["app.apdu"]);
     const info = describeApduScript(parseApduScript(apdu));
-    return { layout: "repo", apdu, info, urls, targetId };
+    let manifest = null;
+    try {
+      manifest = parseArtifactManifest(await fetchText(urls["artifact-manifest.txt"]));
+    } catch (e) {
+      manifest = null;
+    }
+    if (manifest && manifest.mode && manifest.mode !== "prod" && profile !== "dev") {
+      throw new Error(`${entry.id}: refusing a ${manifest.mode} build under profile '${profile}'`);
+    }
+    return { layout: "repo", apdu, info, manifest, profile, urls, targetId };
   }
   const [hex, map, makefile, manifestText] = await Promise.all([
     fetchText(urls["app.hex"]),
@@ -3752,6 +3771,7 @@ export {
   listApps,
   loadApp,
   parseApduScript,
+  parseArtifactManifest,
   parseBip32Path,
   replayApduScript,
   resolveCatalogFiles,

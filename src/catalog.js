@@ -7,12 +7,16 @@
 //      sideloader parses them and drives loadApp().
 //
 //   2. `repo`: the offline load script committed by the firmware repository
-//      at build/<target>/bin/app.apdu is fetched from raw.githubusercontent.com
-//      (CORS "*") and replayed as is through replayApduScript(). Nothing is
-//      rebuilt, parsed or recomputed: targetId, api_level, section sizes and
-//      flags are those the SDK baked in at build time. `target` is derived
-//      from the connected device's targetId so one entry covers every device
-//      the repository ships.
+//      at build/<profile>/<target>/app.apdu is fetched from
+//      raw.githubusercontent.com (CORS "*") and replayed as is through
+//      replayApduScript(). Nothing is rebuilt, parsed or recomputed: targetId,
+//      api_level, section sizes and flags are those the SDK baked in at build
+//      time. `target` is derived from the connected device's targetId so one
+//      entry covers every device the repository ships. `profile` is `prod`
+//      (default) or `dev` (MODE=debug FROST=1 builds, which carry the
+//      key-extraction instructions: never serve them to end users). The
+//      artifact-manifest.txt beside the script, when present, is read and
+//      checked: a `mode=debug` manifest is refused unless profile is `dev`.
 //
 // `ref` is a branch, tag or commit SHA. A pinned SHA is the only value that
 // makes the served binary reproducible; `main` is for development.
@@ -48,12 +52,15 @@ function rawBase(entry) {
 }
 
 // URLs of the files a layout needs.
-//   repo -> { 'app.apdu': url }
+//   repo -> { 'app.apdu': url, 'artifact-manifest.txt': url }
 //   dir  -> { 'app.hex': url, 'app.map': url, 'Makefile': url, 'manifest.json': url }
 export function resolveCatalogFiles(entry, targetId) {
   if (entry.repo) {
-    const bin = `${rawBase(entry)}/${entry.binDir || 'build/{target}/bin'}`.replace('{target}', targetDir(targetId));
-    return { 'app.apdu': `${bin}/app.apdu` };
+    const profile = entry.profile || 'prod';
+    const bin = `${rawBase(entry)}/${entry.binDir || 'build/{profile}/{target}'}`
+      .replace('{profile}', profile)
+      .replace('{target}', targetDir(targetId));
+    return { 'app.apdu': `${bin}/app.apdu`, 'artifact-manifest.txt': `${bin}/artifact-manifest.txt` };
   }
   if (entry.dir) {
     return Object.fromEntries(DIR_ARTIFACT_FILES.map((f) => [f, `${entry.dir}/${f}`]));
@@ -69,8 +76,18 @@ async function fetchText(url) {
   return r.text();
 }
 
+// key=value lines -> object (artifact-manifest.txt: target, backend, mode, frost, commit, elf_sha256)
+export function parseArtifactManifest(text) {
+  const out = {};
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (m) out[m[1]] = m[2];
+  }
+  return out;
+}
+
 // Fetches what the entry's layout needs.
-//   repo -> { layout: 'repo', apdu: text, info: { appName, loadBytes, loadChunks, apdus }, urls }
+//   repo -> { layout: 'repo', apdu: text, info: { appName, loadBytes, loadChunks, apdus }, manifest: {...}|null, urls }
 //   dir  -> { layout: 'dir', hex, map, makefile, manifest, urls }
 // `targetId` may be omitted when `dongle` is given: it is then read from the
 // device (GET_VERSION on the dashboard) and returned as `targetId`.
@@ -81,9 +98,19 @@ export async function fetchCatalogApp(entry, targetId = null, dongle = null) {
   }
   const urls = resolveCatalogFiles(entry, targetId);
   if (entry.repo) {
+    const profile = entry.profile || 'prod';
     const apdu = await fetchText(urls['app.apdu']);
     const info = describeApduScript(parseApduScript(apdu));
-    return { layout: 'repo', apdu, info, urls, targetId };
+    let manifest = null;
+    try {
+      manifest = parseArtifactManifest(await fetchText(urls['artifact-manifest.txt']));
+    } catch (e) {
+      manifest = null; // older layouts have none
+    }
+    if (manifest && manifest.mode && manifest.mode !== 'prod' && profile !== 'dev') {
+      throw new Error(`${entry.id}: refusing a ${manifest.mode} build under profile '${profile}'`);
+    }
+    return { layout: 'repo', apdu, info, manifest, profile, urls, targetId };
   }
   const [hex, map, makefile, manifestText] = await Promise.all([
     fetchText(urls['app.hex']),

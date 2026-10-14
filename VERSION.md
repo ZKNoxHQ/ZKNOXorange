@@ -1,6 +1,11 @@
-# ZKNOX Orange v2.3.0
+# ZKNOX Orange v2.3.1
 
 ## Changelog
+
+### v2.3.1 - 2026-10-14
+
+- `src/firmwareUi.js` : `probe()` (vérification silencieuse après connexion, sans barre de progression) et callback `onFirmwareStatus({ state, info, ctx })` (`checking`, `up-to-date`, `update-available`, `bootloader`, `unknown`) appelé par `probe()`, `check()` et après `update()` ; permet d'afficher l'état du firmware dans la carte Device Status et un bouton Update en tête de page
+- `package.json` : 2.3.1
 
 ### v2.3.0 - 2026-10-14 - "Firmware update"
 

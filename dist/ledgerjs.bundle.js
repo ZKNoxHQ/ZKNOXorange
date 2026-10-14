@@ -4377,6 +4377,8 @@ var FirmwareUi = class {
     });
     this.onDeviceInfo = opts.onDeviceInfo || (() => {
     });
+    this.onFirmwareStatus = opts.onFirmwareStatus || (() => {
+    });
     this.config = opts.config || {};
     this.buttons = {
       firmware: "firmwareBtn",
@@ -4448,6 +4450,37 @@ var FirmwareUi = class {
     return info;
   }
   // ---- actions ----
+  /**
+   * Silent check, meant to run right after a connect: no progress bar, one log line
+   * only when an update exists. Sets the firmware button mode and reports through
+   * onFirmwareStatus. Returns the update context or null.
+   */
+  async probe() {
+    this.onFirmwareStatus({ state: "checking", info: null, ctx: null });
+    try {
+      const updater = this.makeUpdater();
+      const info = await updater.getDeviceInfo();
+      if (info.isBootloader) {
+        this.updateContext = null;
+        this.setFirmwareButton("check");
+        this.onFirmwareStatus({ state: "bootloader", info, ctx: null });
+        return null;
+      }
+      const ctx = await updater.getLatestFirmware(info);
+      this.updateContext = ctx;
+      this.setFirmwareButton(ctx ? "update" : "check");
+      this.onFirmwareStatus({ state: ctx ? "update-available" : "up-to-date", info, ctx });
+      if (ctx) {
+        this.log(`\u26A0\uFE0F Firmware update available: ${ctx.currentVersion} \u2192 ${ctx.targetVersion}` + (ctx.shouldFlashMCU ? " (MCU update included)" : ""), "warning");
+      }
+      return ctx;
+    } catch (error) {
+      console.error("Firmware probe error:", error);
+      this.onFirmwareStatus({ state: "unknown", info: null, ctx: null, error });
+      this.log(`Firmware check failed: ${error.message}`, "warning");
+      return null;
+    }
+  }
   async check() {
     this.setBusy(this.buttons.firmware, "Checking...");
     this.showProgress(true);
@@ -4461,6 +4494,7 @@ var FirmwareUi = class {
       }
       const ctx = await updater.getLatestFirmware(info);
       this.progress(100, ctx ? "Update available!" : "Firmware is up to date!");
+      this.onFirmwareStatus({ state: ctx ? "update-available" : "up-to-date", info, ctx });
       if (!ctx) {
         this.updateContext = null;
         this.log(`\u2713 Firmware ${info.version} is up to date`, "success");
@@ -4494,6 +4528,7 @@ var FirmwareUi = class {
       await updater.update(ctx);
       const info = await this.refreshDeviceInfo(updater);
       this.updateContext = null;
+      this.onFirmwareStatus({ state: "up-to-date", info, ctx: null });
       this.log(`\u2713 Device now on firmware ${info.version}`, "success");
     } catch (error) {
       console.error("Firmware update error:", error);

@@ -1,6 +1,16 @@
-# ZKNOX Orange v2.2.0
+# ZKNOX Orange v2.3.0
 
 ## Changelog
+
+### v2.3.0 - 2026-10-14 - "Firmware update"
+
+- `src/firmwareUpdater.js` (repris de ZKNOX Blue 1.1.1) : mise à jour de firmware via le scriptrunner Ledger, port de `@ledgerhq/live-common` 34.51 (`socket`, `deviceSDK/tasks/updateFirmware`, `hw/firmwareUpdate-main`, `hw/firmwareUpdate-repair`, `parseGetVersionResponse`, `getLatestFirmwareForDevice`) : OSU → reconnexion → boucle bootloader/MCU (`version = mcu.name` si le bootloader est déjà `from_bootloader_version`, sinon ce bootloader en 3 composantes) → firmware final si l'API en fournit un ; `repair()` pour un device en bootloader (SE rapporté en `-osu` géré)
+  - reconnexion après reboot transport-agnostique : en Bluetooth le `BluetoothDevice` est reconnecté par `gatt.connect()` sans chooser, en USB les devices HID déjà appairés sont rouverts ; sinon modale avec boutons USB et Bluetooth
+- `src/firmwareUi.js` (repris de ZKNOX Blue 1.2.0) : glu DOM des boutons Check / Update / Bootloader Recovery pilotée par callbacks, consommée par `sideloader.html` (section « 5. Firmware »)
+- `src/transport.js` : écoute `navigator.hid` `disconnect` (échec immédiat de l'échange en cours), `sendReport` en échec lève `CommException('Device disconnected')`
+- `src/index.js` : exporte `FirmwareUpdater`, `FirmwareError`, `FIRMWARE_DEFAULTS`, `parseGetVersion`, `findBestMCU`, `getFlashMcuOrBootloaderDetails`, `getDeviceModelName`, `FirmwareUi`
+- `package.json` : 2.3.0
+
 
 ### v2.2.0 - 2026-10-13 - "Profils prod/dev"
 

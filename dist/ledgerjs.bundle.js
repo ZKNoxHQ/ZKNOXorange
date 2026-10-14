@@ -171,6 +171,8 @@ var TransportWebHID = class _TransportWebHID {
     this.opened = false;
     this._inputReportPromise = null;
     this._inputReportResolve = null;
+    this._inputReportReject = null;
+    this._onDisconnect = null;
   }
   /**
    * Open connection to device
@@ -187,11 +189,23 @@ var TransportWebHID = class _TransportWebHID {
         this._inputReportResolve = null;
       }
     });
+    if (navigator.hid && !this._onDisconnect) {
+      this._onDisconnect = (event) => {
+        if (event.device !== this.device) return;
+        this.opened = false;
+        if (this._inputReportReject) this._inputReportReject(new CommException("Device disconnected"));
+      };
+      navigator.hid.addEventListener("disconnect", this._onDisconnect);
+    }
   }
   /**
    * Close connection to device
    */
   async close() {
+    if (navigator.hid && this._onDisconnect) {
+      navigator.hid.removeEventListener("disconnect", this._onDisconnect);
+      this._onDisconnect = null;
+    }
     if (this.opened && this.device.opened) {
       await this.device.close();
     }
@@ -206,11 +220,19 @@ var TransportWebHID = class _TransportWebHID {
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this._inputReportResolve = null;
+        this._inputReportReject = null;
         reject(new CommException("Timeout waiting for device response"));
       }, timeout);
       this._inputReportResolve = (data) => {
         clearTimeout(timeoutId);
+        this._inputReportReject = null;
         resolve(data);
+      };
+      this._inputReportReject = (err2) => {
+        clearTimeout(timeoutId);
+        this._inputReportResolve = null;
+        this._inputReportReject = null;
+        reject(err2);
       };
     });
   }
@@ -230,7 +252,12 @@ var TransportWebHID = class _TransportWebHID {
     const wrapped = wrapCommandAPDU(CHANNEL_ID, apdu, HID_PACKET_SIZE);
     for (let offset = 0; offset < wrapped.length; offset += HID_PACKET_SIZE) {
       const packet = wrapped.slice(offset, offset + HID_PACKET_SIZE);
-      await this.device.sendReport(0, packet);
+      try {
+        await this.device.sendReport(0, packet);
+      } catch (e) {
+        this.opened = false;
+        throw new CommException(`Device disconnected (failed to write: ${e.message})`);
+      }
     }
     let responseBuffer = new Uint8Array(0);
     let response = null;
@@ -279,7 +306,12 @@ var TransportWebHID = class _TransportWebHID {
     const wrapped = wrapCommandAPDU(CHANNEL_ID, apdu, HID_PACKET_SIZE);
     for (let offset = 0; offset < wrapped.length; offset += HID_PACKET_SIZE) {
       const packet = wrapped.slice(offset, offset + HID_PACKET_SIZE);
-      await this.device.sendReport(0, packet);
+      try {
+        await this.device.sendReport(0, packet);
+      } catch (e) {
+        this.opened = false;
+        throw new CommException(`Device disconnected (failed to write: ${e.message})`);
+      }
     }
     let responseBuffer = new Uint8Array(0);
     let response = null;
@@ -3744,10 +3776,839 @@ var TransportWebBLE = class _TransportWebBLE {
     return transport;
   }
 };
+
+// src/firmwareUpdater.js
+var FIRMWARE_DEFAULTS = Object.freeze({
+  liveCommonVersion: "34.51.0",
+  provider: 1,
+  apiBase: "https://manager.api.live.ledger.com/api",
+  socketBase: "wss://scriptrunner.api.live.ledger.com/update",
+  apduTimeoutMs: 6e4,
+  // ordinary APDU (socket exchange / bulk)
+  userConfirmTimeoutMs: 9e5,
+  // APDU blocked on an on-device confirmation
+  maxFlashRepetitions: 5,
+  reconnectPollMs: 1e3,
+  reconnectAutoMs: 25e3
+  // silent getDevices() polling before asking the user
+});
+var SW_OK = 36864;
+var SW_LOCKED = 21781;
+var SW_USER_REFUSED = 21761;
+var SW_CONDITIONS_NOT_SATISFIED = 27013;
+var FirmwareError = class extends Error {
+  constructor(code, message) {
+    super(message || code);
+    this.name = "FirmwareError";
+    this.code = code;
+  }
+};
+function getDeviceModelName(targetId) {
+  switch (targetId & 4294901760) {
+    case 823132160:
+      return "Nano S";
+    case 855638016:
+      return "Nano X";
+    case 856686592:
+      return "Nano S Plus";
+    case 857735168:
+      return "Stax";
+    case 858783744:
+      return "Flex";
+    default:
+      return "Unknown";
+  }
+}
+function u32be(data, i) {
+  return (data[i] << 24 | data[i + 1] << 16 | data[i + 2] << 8 | data[i + 3]) >>> 0;
+}
+function cstr(bytes) {
+  if (bytes.length && bytes[bytes.length - 1] === 0) bytes = bytes.slice(0, -1);
+  return new TextDecoder().decode(bytes);
+}
+function parseGetVersion(data) {
+  let i = 0;
+  const targetId = u32be(data, i);
+  i += 4;
+  const rawVersionLength = data[i++];
+  let rawVersion = new TextDecoder().decode(data.slice(i, i + rawVersionLength));
+  i += rawVersionLength;
+  const flagsLength = data[i++];
+  let flags = Array.from(data.slice(i, i + flagsLength));
+  i += flagsLength;
+  if (!rawVersionLength) {
+    rawVersion = "0.0.0";
+    flags = [];
+  }
+  const isBootloader = (targetId & 4026531840) !== 805306368;
+  let mcuVersion = "", mcuBlVersion = null, seVersion = null, seTargetId = null, mcuTargetId = null;
+  if (isBootloader) {
+    mcuBlVersion = rawVersion;
+    mcuTargetId = targetId;
+    if (i < data.length) {
+      const part1Length = data[i++];
+      const part1 = data.slice(i, i + part1Length);
+      i += part1Length;
+      if (part1Length >= 5) {
+        seVersion = new TextDecoder().decode(part1);
+        const part2Length = data[i++];
+        const part2 = data.slice(i, i + part2Length);
+        if (part2.length >= 4) seTargetId = u32be(part2, 0);
+      } else if (part1Length >= 4) {
+        seTargetId = u32be(part1, 0);
+      }
+    }
+  } else {
+    seVersion = rawVersion;
+    seTargetId = targetId;
+    const mcuVersionLength = data[i++];
+    mcuVersion = cstr(data.slice(i, i + mcuVersionLength));
+    i += mcuVersionLength;
+  }
+  const isOSU = rawVersion.includes("-osu");
+  const version = rawVersion.replace("-osu", "");
+  const m = rawVersion.match(/([0-9]+.[0-9]+(.[0-9]+){0,1})?(-(.*))?/);
+  const majMin = m && m[1] || "";
+  return {
+    targetId,
+    rawVersion,
+    version,
+    majMin,
+    flags,
+    isBootloader,
+    isOSU,
+    seVersion,
+    seTargetId,
+    mcuVersion,
+    mcuBlVersion,
+    mcuTargetId,
+    model: getDeviceModelName(isBootloader && seTargetId ? seTargetId : targetId),
+    managerAllowed: !!(flags[0] & 8),
+    pinValidated: !!(flags[0] & 128)
+  };
+}
+function coerce(v) {
+  const m = String(v || "").match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  if (!m) return [0, 0, 0];
+  return [Number(m[1]), Number(m[2] || 0), Number(m[3] || 0)];
+}
+function semverGt(a, b) {
+  const x = coerce(a), y = coerce(b);
+  for (let k = 0; k < 3; k++) {
+    if (x[k] !== y[k]) return x[k] > y[k];
+  }
+  return false;
+}
+function findBestMCU(mcus) {
+  if (!mcus.length) return null;
+  let best = mcus[0];
+  for (let k = 1; k < mcus.length; k++) {
+    if (semverGt(mcus[k].name, best.name)) best = mcus[k];
+  }
+  return best;
+}
+function getFlashMcuOrBootloaderDetails(deviceMajMin, mcuFromBootloaderVersion) {
+  const bootloaderVersion = String(mcuFromBootloaderVersion || "").split(".").slice(0, 3).join(".");
+  return { bootloaderVersion, isMcuUpdate: deviceMajMin === bootloaderVersion };
+}
+var FirmwareUpdater = class {
+  /**
+   * @param {object} opts
+   * @param {object} opts.transport   - TransportWebHID-like (exchange(apdu, timeout) -> data, throws CommException with .sw)
+   * @param {function} opts.reconnect - async (message, kind) => transport ; must run from a user gesture (WebHID/Bluetooth chooser), kind = 'usb' | 'ble' is the link the device was on
+   * @param {function} [opts.onLog]      - (message, type) => void
+   * @param {function} [opts.onProgress] - (percent, text) => void
+   * @param {function} [opts.onEvent]    - (eventName, payload) => void
+   */
+  constructor(opts) {
+    this.transport = opts.transport || null;
+    this.reconnect = opts.reconnect;
+    this.onLog = opts.onLog || (() => {
+    });
+    this.onProgress = opts.onProgress || (() => {
+    });
+    this.onEvent = opts.onEvent || (() => {
+    });
+    this.cfg = { ...FIRMWARE_DEFAULTS, ...opts.config || {} };
+    this.provider = this.cfg.provider;
+  }
+  log(message, type = "info") {
+    this.onLog(message, type);
+  }
+  progress(percent, text) {
+    this.onProgress(Math.round(percent), text);
+  }
+  // ---- HTTP manager API ----
+  async api(path, query = {}) {
+    const q = new URLSearchParams({ livecommonversion: this.cfg.liveCommonVersion, ...query });
+    const resp = await fetch(`${this.cfg.apiBase}/${path}?${q}`);
+    if (!resp.ok) throw new FirmwareError("ManagerApiError", `${path}: HTTP ${resp.status}`);
+    return resp.json();
+  }
+  /** port of device-core getLatestFirmwareForDevice. Returns null when up to date. */
+  async getLatestFirmware(deviceInfo) {
+    const provider = this.provider;
+    const mcusPromise = this.api("mcu_versions");
+    const deviceVersion = await this.api("get_device_version", { provider, target_id: deviceInfo.targetId });
+    let osu;
+    if (deviceInfo.isOSU) {
+      osu = await this.api("get_osu_version", {
+        device_version: deviceVersion.id,
+        version_name: `${deviceInfo.version}-osu`,
+        provider
+      });
+    } else {
+      const current = await this.api("get_firmware_version", {
+        device_version: deviceVersion.id,
+        version_name: deviceInfo.version,
+        provider
+      });
+      const salt = Array.from(crypto.getRandomValues(new Uint8Array(8))).map((b) => b.toString(16).padStart(2, "0")).join("");
+      const latest = await this.api("get_latest_firmware", {
+        salt,
+        current_se_firmware_final_version: current.id,
+        device_version: deviceVersion.id,
+        provider
+      });
+      osu = latest.result === "null" ? null : latest.se_firmware_osu_version;
+    }
+    if (!osu) return null;
+    const mcus = await mcusPromise;
+    const currentMcu = mcus.find((m) => m.name === deviceInfo.mcuVersion);
+    if (!currentMcu) throw new FirmwareError("UnknownMCU", `Unknown MCU version "${deviceInfo.mcuVersion}"`);
+    const final = await this.api(`firmware_final_versions/${osu.next_se_firmware_final_version}`);
+    const shouldFlashMCU = !final.mcu_versions.includes(currentMcu.id);
+    return {
+      osu,
+      final,
+      shouldFlashMCU,
+      mcus,
+      currentVersion: deviceInfo.version,
+      targetVersion: final.version || final.name
+    };
+  }
+  /** port of ManagerAPI.retrieveMcuVersion */
+  retrieveMcuVersion(final, mcus) {
+    const available = mcus.filter((m) => m.providers.includes(this.provider) && m.from_bootloader_version !== "none" && final.mcu_versions.includes(m.id));
+    return findBestMCU(available);
+  }
+  // ---- device ----
+  async getDeviceInfo(transport = this.transport) {
+    const data = await transport.exchange(new Uint8Array([224, 1, 0, 0, 0]), this.cfg.apduTimeoutMs);
+    return parseGetVersion(data);
+  }
+  /**
+   * Device rebooted: wait for it to come back on the same link, then hand over to the
+   * page (user gesture) if it does not.
+   *  - BLE: the BluetoothDevice object survives the reboot, gatt.connect() needs no
+   *    chooser. Nano X / Stax / Flex bootloader and OSU advertise the same service.
+   *  - USB: already-paired HID devices are reopened silently; the bootloader and the
+   *    OSU enumerate with another product id, which usually needs a new requestDevice.
+   */
+  async waitForDevice(message) {
+    const previous = this.transport;
+    const bleDevice = previous && previous.device && previous.device.gatt ? previous.device : null;
+    if (previous) {
+      try {
+        await previous.close();
+      } catch (e) {
+      }
+      this.transport = null;
+    }
+    const deadline = Date.now() + this.cfg.reconnectAutoMs;
+    while (Date.now() < deadline) {
+      await sleep(this.cfg.reconnectPollMs);
+      const candidates = [];
+      try {
+        if (bleDevice) {
+          candidates.push(new TransportWebBLE(bleDevice, false));
+        } else if (navigator.hid) {
+          for (const d of await navigator.hid.getDevices()) {
+            if (d.vendorId === 11415) candidates.push(new TransportWebHID(d, false));
+          }
+        }
+      } catch (e) {
+      }
+      for (const t of candidates) {
+        try {
+          await t.open();
+          const info = await this.getDeviceInfo(t);
+          this.transport = t;
+          this.log(`Device back over ${bleDevice ? "Bluetooth" : "USB"}: ${info.isBootloader ? "bootloader " + info.rawVersion : info.rawVersion}`, "info");
+          return info;
+        } catch (e) {
+          try {
+            await t.close();
+          } catch (_) {
+          }
+          if (e && e.sw === SW_LOCKED) this.log("Device is locked, unlock it to continue...", "warning");
+        }
+      }
+    }
+    this.transport = await this.reconnect(message, bleDevice ? "ble" : "usb");
+    return this.getDeviceInfo();
+  }
+  // ---- scriptrunner socket (port of live-common socket/index.js) ----
+  /**
+   * @param {string} url
+   * @param {object} o
+   * @param {function} [o.onProgress] - (index, total) during bulk
+   * @param {boolean} [o.unresponsiveExpectedDuringBulk] - bulk APDUs may wait for the user (firmware)
+   * @param {boolean} [o.rebootExpectedAtEndOfBulk] - device drops the link right after the last bulk APDU
+   */
+  runSocket(url, o = {}) {
+    const transport = this.transport;
+    const cfg = this.cfg;
+    const self = this;
+    return new Promise((resolve, reject) => {
+      let deviceError = null;
+      let inBulkMode = false;
+      let correctlyFinished = false;
+      let settled = false;
+      const done = (err2) => {
+        if (settled) return;
+        settled = true;
+        if (err2) reject(err2);
+        else resolve();
+      };
+      const ws = new WebSocket(url);
+      ws.onopen = () => self.log("Connected to Ledger HSM", "info");
+      ws.onerror = () => {
+        if (inBulkMode) return;
+        done(new FirmwareError("WebsocketConnectionError", "HSM websocket error"));
+      };
+      ws.onclose = () => {
+        if (inBulkMode) return;
+        if (correctlyFinished) done();
+        else done(deviceError || new FirmwareError("WebsocketConnectionError", "HSM websocket closed"));
+      };
+      ws.onmessage = async (e) => {
+        try {
+          const input = JSON.parse(e.data);
+          switch (input.query) {
+            case "exchange": {
+              deviceError = null;
+              const apdu = hexToBytes2(input.data);
+              const pendingAllowSecureChannel = apdu[0] === 224 && apdu[1] === 81;
+              if (pendingAllowSecureChannel) self.onEvent("allowSecureChannelRequested");
+              const timeout = pendingAllowSecureChannel ? cfg.userConfirmTimeoutMs : cfg.apduTimeoutMs;
+              let status, data;
+              try {
+                data = await transport.exchange(apdu, timeout);
+                status = SW_OK;
+              } catch (err2) {
+                if (!(err2 instanceof CommException) || err2.data == null) {
+                  throw err2;
+                }
+                status = err2.sw;
+                data = err2.data || new Uint8Array(0);
+              }
+              let response;
+              if (status === SW_OK) {
+                response = "success";
+              } else if (status === SW_LOCKED) {
+                throw new FirmwareError("DeviceLocked", "Device is locked");
+              } else if ((status === SW_USER_REFUSED || status === SW_CONDITIONS_NOT_SATISFIED) && pendingAllowSecureChannel) {
+                throw new FirmwareError("UserRefusedAllowManager", "Secure channel refused on device");
+              } else {
+                response = "error";
+                deviceError = new FirmwareError("TransportStatusError", `Device returned 0x${status.toString(16)}`);
+              }
+              if (pendingAllowSecureChannel) self.onEvent("allowSecureChannelGranted");
+              ws.send(JSON.stringify({ nonce: input.nonce, response, data: bytesToHex3(data) }));
+              break;
+            }
+            case "bulk": {
+              inBulkMode = true;
+              ws.close();
+              const apdus = (input.data || []).filter((d) => d !== "").map(hexToBytes2);
+              const total = apdus.length;
+              if (o.onProgress) o.onProgress(0, total);
+              for (let i = 0; i < total; i++) {
+                const last = i === total - 1;
+                const timeout = o.unresponsiveExpectedDuringBulk ? cfg.userConfirmTimeoutMs : cfg.apduTimeoutMs;
+                if (last && o.unresponsiveExpectedDuringBulk) self.onEvent("devicePermissionRequested");
+                try {
+                  await transport.exchange(apdus[i], timeout);
+                } catch (err2) {
+                  if (last && o.rebootExpectedAtEndOfBulk && isDisconnect(err2)) {
+                    self.log("Device rebooted before acknowledging the last APDU (expected)", "info");
+                    break;
+                  }
+                  throw mapFirmwareStatus(err2);
+                }
+                if (last && o.unresponsiveExpectedDuringBulk) self.onEvent("devicePermissionGranted");
+                if (o.onProgress) o.onProgress(i + 1, total);
+              }
+              correctlyFinished = true;
+              done();
+              break;
+            }
+            case "success":
+              if (inBulkMode) break;
+              correctlyFinished = true;
+              done();
+              break;
+            case "error":
+              if (inBulkMode) break;
+              throw new FirmwareError("DeviceSocketFail", `HSM error: ${input.data}`);
+            case "warning":
+              if (inBulkMode) break;
+              self.log(`HSM warning: ${input.data}`, "warning");
+              break;
+            default:
+              break;
+          }
+        } catch (err2) {
+          deviceError = err2;
+          try {
+            ws.close();
+          } catch (_) {
+          }
+          done(err2);
+        }
+      };
+    });
+  }
+  socketUrl(path, query) {
+    const q = new URLSearchParams({ livecommonversion: this.cfg.liveCommonVersion, ...query });
+    return `${this.cfg.socketBase}/${path}?${q}`;
+  }
+  installOsu(targetId, osu, base, span) {
+    this.log(`Installing OSU ${osu.name || ""}...`, "info");
+    return this.runSocket(this.socketUrl("install", {
+      targetId,
+      perso: osu.perso,
+      firmware: osu.firmware,
+      firmwareKey: osu.firmware_key
+    }), {
+      unresponsiveExpectedDuringBulk: true,
+      rebootExpectedAtEndOfBulk: true,
+      onProgress: (i, n) => this.progress(base + span * (i / n), i === n - 1 ? "Confirm the update on your device..." : `Installing OSU ${i}/${n}`)
+    });
+  }
+  flashMcuOrBootloader(targetId, version, label, base, span) {
+    this.log(`Flashing ${label} ${version} (bootloader targetId 0x${targetId.toString(16)})...`, "warning");
+    this.log("DO NOT unplug the device.", "warning");
+    return this.runSocket(this.socketUrl("mcu", { targetId, version }), {
+      unresponsiveExpectedDuringBulk: true,
+      rebootExpectedAtEndOfBulk: true,
+      onProgress: (i, n) => this.progress(base + span * (i / n), `Flashing ${label} ${i}/${n}`)
+    });
+  }
+  installFinal(targetId, final, base, span) {
+    this.log(`Installing final firmware ${final.name || final.version}...`, "info");
+    return this.runSocket(this.socketUrl("install", {
+      targetId,
+      perso: final.perso,
+      firmware: final.firmware,
+      firmwareKey: final.firmware_key
+    }), {
+      unresponsiveExpectedDuringBulk: true,
+      rebootExpectedAtEndOfBulk: true,
+      onProgress: (i, n) => this.progress(base + span * (i / n), `Installing firmware ${i}/${n}`)
+    });
+  }
+  // ---- full update (updateFirmwareTask + firmwareUpdate-main) ----
+  /**
+   * @param {object} ctx - result of getLatestFirmware()
+   * @returns {object} device info after the update
+   */
+  async update(ctx) {
+    const { osu, final, shouldFlashMCU, mcus } = ctx;
+    const cfg = this.cfg;
+    let info = await this.getDeviceInfo();
+    if (info.isBootloader || info.isOSU) {
+      throw new FirmwareError("DeviceOnDashboardExpected", "Device must be on the dashboard (not bootloader / OSU)");
+    }
+    this.log(`Firmware update ${info.version} -> ${ctx.targetVersion}` + (shouldFlashMCU ? " (MCU update required)" : " (SE only)"), "warning");
+    this.progress(2, "Installing OSU...");
+    await this.installOsu(info.targetId, osu, 2, 40);
+    this.log("OSU installed, device is rebooting...", "success");
+    this.progress(42, "Device rebooting...");
+    info = await this.waitForDevice("Your Ledger rebooted after the OSU step. Plug it back / unlock it, then reconnect.");
+    if (shouldFlashMCU) {
+      if (!info.isBootloader) {
+        throw new FirmwareError(
+          "DeviceOnBootloaderExpected",
+          `Expected the device in bootloader mode, got ${info.rawVersion}. Unplug it and plug it back holding the left button, then use Bootloader Recovery.`
+        );
+      }
+      let repetitions = 0;
+      while (info.isBootloader) {
+        if (repetitions > cfg.maxFlashRepetitions) {
+          throw new FirmwareError("TooManyMcuOrBootloaderFlashes", "Still in bootloader after too many flashes");
+        }
+        const mcuVersion = this.retrieveMcuVersion(final, mcus);
+        if (!mcuVersion) throw new FirmwareError("McuVersionNotFound", "No MCU found for this firmware on this provider");
+        const { bootloaderVersion, isMcuUpdate } = getFlashMcuOrBootloaderDetails(info.majMin, mcuVersion.from_bootloader_version);
+        const version = isMcuUpdate ? mcuVersion.name : bootloaderVersion;
+        const base = 45 + repetitions * 10;
+        await this.flashMcuOrBootloader(info.targetId, version, isMcuUpdate ? "MCU" : "bootloader", base, 10);
+        this.log(`${isMcuUpdate ? "MCU" : "Bootloader"} ${version} flashed, device rebooting...`, "success");
+        info = await this.waitForDevice("Your Ledger rebooted after the MCU step. Reconnect it.");
+        repetitions++;
+      }
+    }
+    if (final && final.firmware) {
+      if (!info.isOSU) {
+        throw new FirmwareError("DeviceInOSUExpected", `Expected the device in OSU mode, got ${info.rawVersion}`);
+      }
+      this.progress(85, "Installing final firmware...");
+      await this.installFinal(info.targetId, final, 85, 12);
+      info = await this.waitForDevice("Your Ledger rebooted with the new firmware. Unlock it and reconnect.");
+    } else if (info.isOSU) {
+      this.log("Device still reports OSU, waiting for it to finish...", "info");
+      info = await this.waitForDevice("Your Ledger is finishing the update. Unlock it and reconnect.");
+    }
+    this.progress(100, `Firmware ${info.version}`);
+    this.log(`Firmware update complete: ${info.version} (MCU ${info.mcuVersion})`, "success");
+    return info;
+  }
+  // ---- bootloader recovery (firmwareUpdate-repair, default branch) ----
+  /**
+   * Device stuck in bootloader mode (plug it holding the left button).
+   * Flashes the bootloader then the MCU matching the SE firmware the device reports,
+   * exactly like Ledger Live's "repair". Loops until the device leaves bootloader mode.
+   */
+  async repair() {
+    const cfg = this.cfg;
+    let info = await this.getDeviceInfo();
+    if (!info.isBootloader) {
+      this.log(`Device reports ${info.rawVersion} (${info.model}), not the bootloader: nothing to repair. To force bootloader mode, unplug the device and plug it back while holding the left button.`, "warning");
+      return info;
+    }
+    this.log(`Bootloader ${info.mcuBlVersion} (targetId 0x${info.targetId.toString(16)}), SE ${info.seVersion || "?"} (targetId ${info.seTargetId ? "0x" + info.seTargetId.toString(16) : "?"})`, "info");
+    const mcus = await this.api("mcu_versions");
+    const available = mcus.filter((m) => m.providers.includes(this.provider) && m.from_bootloader_version !== "none");
+    let repetitions = 0;
+    while (info.isBootloader) {
+      if (repetitions > cfg.maxFlashRepetitions) {
+        throw new FirmwareError("TooManyMcuOrBootloaderFlashes", "Still in bootloader after too many flashes");
+      }
+      let version;
+      if (info.seVersion && info.seTargetId) {
+        const finalFirmware = await this.finalFirmwareForSe(info.seTargetId, info.seVersion);
+        const mcu = findBestMCU(available.filter((m) => finalFirmware.mcu_versions.includes(m.id)));
+        if (!mcu) throw new FirmwareError("McuVersionNotFound", `No MCU for SE ${info.seVersion}`);
+        const expected = coerce(mcu.from_bootloader_version).join(".");
+        const current = coerce(info.mcuBlVersion).join(".");
+        version = expected === current ? mcu.name : expected;
+        this.log(`SE ${info.seVersion} wants MCU ${mcu.name} on bootloader ${expected}; current bootloader ${current}: flashing ${version}`, "info");
+      } else {
+        const current = coerce(info.mcuBlVersion).join(".");
+        const mcu = findBestMCU(available.filter((m) => coerce(m.from_bootloader_version).join(".") === current));
+        if (!mcu) throw new FirmwareError("McuVersionNotFound", `No MCU compatible with bootloader ${info.rawVersion}`);
+        version = mcu.name;
+        this.log(`No SE info from bootloader ${current}: flashing MCU ${version}`, "info");
+      }
+      await this.flashMcuOrBootloader(info.targetId, version, "MCU/bootloader", 10 + repetitions * 20, 20);
+      info = await this.waitForDevice("Your Ledger rebooted. Reconnect it (hold the left button while plugging it if it is still in bootloader).");
+      repetitions++;
+    }
+    if (info.isOSU) {
+      this.log(`Secure Element is on OSU ${info.rawVersion}: finishing the update`, "warning");
+      const ctx = await this.getLatestFirmware(info);
+      if (ctx && ctx.final && ctx.final.firmware) {
+        await this.installFinal(info.targetId, ctx.final, 85, 12);
+      }
+      info = await this.waitForDevice("Your Ledger is finishing the update. Unlock it and reconnect.");
+    }
+    this.progress(100, "Recovered");
+    this.log(`Device recovered: firmware ${info.version}, MCU ${info.mcuVersion}`, "success");
+    return info;
+  }
+  /**
+   * Final-firmware record (with its mcu_versions) for the SE version a bootloader reports.
+   * The SE may report "x.y.z-osu" when the update was interrupted after the OSU step: the
+   * manager API knows that one under get_osu_version, whose next_se_firmware_final_version
+   * is the firmware the MCU must match.
+   */
+  async finalFirmwareForSe(seTargetId, seVersion) {
+    const provider = this.provider;
+    const deviceVersion = await this.api("get_device_version", { provider, target_id: seTargetId });
+    const isOSU = seVersion.includes("-osu");
+    const version = seVersion.replace("-osu", "");
+    if (!isOSU) {
+      try {
+        return await this.api("get_firmware_version", { device_version: deviceVersion.id, version_name: version, provider });
+      } catch (e) {
+        this.log(`get_firmware_version(${version}) failed (${e.message}), trying the OSU record`, "warning");
+      }
+    }
+    const osu = await this.api("get_osu_version", { device_version: deviceVersion.id, version_name: `${version}-osu`, provider });
+    return this.api(`firmware_final_versions/${osu.next_se_firmware_final_version}`);
+  }
+};
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+function isDisconnect(err2) {
+  const m = String(err2 && err2.message || "").toLowerCase();
+  return m.includes("disconnect") || m.includes("timeout") || m.includes("not opened") || m.includes("failed to write");
+}
+function mapFirmwareStatus(err2) {
+  if (!(err2 instanceof CommException)) return err2;
+  switch (err2.sw) {
+    case 27268:
+    case 20739:
+      return new FirmwareError("NotEnoughSpace", "Not enough space on device for the firmware");
+    case 27269:
+    case 20738:
+    case 27013:
+    case 21761:
+      return new FirmwareError("UserRefusedFirmwareUpdate", "Update refused on device");
+    default:
+      return err2;
+  }
+}
+
+// src/firmwareUi.js
+var GET_VERSION = new Uint8Array([224, 1, 0, 0, 0]);
+var FirmwareUi = class {
+  constructor(opts) {
+    this.getTransport = opts.getTransport;
+    this.setTransport = opts.setTransport;
+    this.log = opts.log || (() => {
+    });
+    this.progress = opts.progress || (() => {
+    });
+    this.showProgress = opts.showProgress || (() => {
+    });
+    this.onDeviceInfo = opts.onDeviceInfo || (() => {
+    });
+    this.config = opts.config || {};
+    this.buttons = {
+      firmware: "firmwareBtn",
+      recovery: "recoveryBtn",
+      lockWhileUpdating: ["connectBtn", "refreshBtn", "genuineBtn"],
+      ...opts.buttons || {}
+    };
+    this.labels = {
+      check: "\u{1F4E6} Check Firmware",
+      update: "\u2B06\uFE0F Update Firmware",
+      recovery: "\u{1F6E0}\uFE0F Bootloader Recovery",
+      ...opts.labels || {}
+    };
+    this.updateContext = null;
+  }
+  el(id) {
+    return document.getElementById(id);
+  }
+  mount() {
+    const fwBtn = this.el(this.buttons.firmware);
+    if (fwBtn) fwBtn.onclick = () => this.check();
+    const recBtn = this.el(this.buttons.recovery);
+    if (recBtn) recBtn.onclick = () => this.recover();
+    return this;
+  }
+  /** Call on (re)connect: forgets any pending update and resets the button. */
+  reset() {
+    this.updateContext = null;
+    this.setFirmwareButton("check", false);
+  }
+  setFirmwareButton(mode, disabled = false) {
+    const btn = this.el(this.buttons.firmware);
+    if (!btn) return;
+    btn.disabled = disabled;
+    btn.classList.toggle("warning", mode === "update");
+    btn.classList.toggle("secondary", mode !== "update");
+    btn.textContent = mode === "update" ? this.labels.update : this.labels.check;
+    btn.onclick = mode === "update" ? () => this.update() : () => this.check();
+  }
+  setBusy(btnId, text) {
+    const btn = this.el(btnId);
+    if (!btn) return;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="loading"></span>${text}`;
+  }
+  lock(locked) {
+    for (const id of this.buttons.lockWhileUpdating) {
+      const b = this.el(id);
+      if (b) b.disabled = locked;
+    }
+  }
+  makeUpdater() {
+    return new FirmwareUpdater({
+      transport: this.getTransport(),
+      reconnect: (message, kind) => this.showReconnectModal(message, kind),
+      onLog: this.log,
+      onProgress: this.progress,
+      onEvent: (name) => {
+        if (name === "allowSecureChannelRequested") this.log("Allow the secure channel on your device", "warning");
+        if (name === "devicePermissionRequested") this.log("Confirm the firmware update on your device", "warning");
+      },
+      config: this.config
+    });
+  }
+  async refreshDeviceInfo(updater) {
+    this.setTransport(updater.transport);
+    const info = await updater.getDeviceInfo();
+    this.onDeviceInfo(info);
+    return info;
+  }
+  // ---- actions ----
+  async check() {
+    this.setBusy(this.buttons.firmware, "Checking...");
+    this.showProgress(true);
+    this.progress(20, "Querying Ledger servers...");
+    try {
+      const updater = this.makeUpdater();
+      const info = await updater.getDeviceInfo();
+      if (info.isBootloader) {
+        this.log("Device is in bootloader mode: use Bootloader Recovery", "warning");
+        return;
+      }
+      const ctx = await updater.getLatestFirmware(info);
+      this.progress(100, ctx ? "Update available!" : "Firmware is up to date!");
+      if (!ctx) {
+        this.updateContext = null;
+        this.log(`\u2713 Firmware ${info.version} is up to date`, "success");
+        return;
+      }
+      this.updateContext = ctx;
+      this.log(`\u26A0\uFE0F FIRMWARE UPDATE AVAILABLE: ${ctx.currentVersion} \u2192 ${ctx.targetVersion}`, "warning");
+      this.log(ctx.shouldFlashMCU ? `MCU ${info.mcuVersion} must also be flashed (device will pass through bootloader mode)` : `Secure Element only (MCU ${info.mcuVersion} is compatible)`, "info");
+      this.log('Click "Update Firmware" to start. Keep the device plugged in for the whole process.', "info");
+    } catch (error) {
+      console.error("Firmware check error:", error);
+      this.log(`Firmware check failed: ${error.message}`, "error");
+      this.progress(0, "Check failed");
+    } finally {
+      this.setFirmwareButton(this.updateContext ? "update" : "check");
+      setTimeout(() => this.showProgress(false), 2e3);
+    }
+  }
+  async update() {
+    if (!this.updateContext) {
+      this.log("No firmware update available. Check first.", "error");
+      return;
+    }
+    const ctx = this.updateContext;
+    this.setBusy(this.buttons.firmware, "Updating...");
+    this.lock(true);
+    this.showProgress(true);
+    try {
+      this.log("\u26A0\uFE0F DO NOT unplug your device during the update, even when the screen goes blank.", "warning");
+      const updater = this.makeUpdater();
+      await updater.update(ctx);
+      const info = await this.refreshDeviceInfo(updater);
+      this.updateContext = null;
+      this.log(`\u2713 Device now on firmware ${info.version}`, "success");
+    } catch (error) {
+      console.error("Firmware update error:", error);
+      this.log(`Firmware update failed: ${error.message}`, "error");
+      this.log('If the device shows "Bootloader", unplug it, plug it back holding the left button and use Bootloader Recovery.', "warning");
+      this.progress(0, "Update failed");
+    } finally {
+      this.lock(false);
+      this.setFirmwareButton(this.updateContext ? "update" : "check");
+      setTimeout(() => this.showProgress(false), 3e3);
+    }
+  }
+  async recover() {
+    this.setBusy(this.buttons.recovery, "Recovering...");
+    this.showProgress(true);
+    this.progress(5, "Connecting to device in bootloader mode...");
+    try {
+      this.log("\u{1F6E0}\uFE0F Bootloader recovery: flashing bootloader/MCU matching the firmware on the Secure Element", "warning");
+      let transport = this.getTransport();
+      let probeOk = false;
+      if (transport && transport.opened) {
+        try {
+          await transport.exchange(GET_VERSION);
+          probeOk = true;
+        } catch (e) {
+          probeOk = false;
+        }
+      }
+      if (!probeOk) {
+        if (transport) {
+          try {
+            await transport.close();
+          } catch (e) {
+          }
+        }
+        transport = await TransportWebHID.request(true);
+        this.setTransport(transport);
+      }
+      this.log(`GET_VERSION: ${bytesToHex3(await transport.exchange(GET_VERSION))}`, "info");
+      const updater = this.makeUpdater();
+      await updater.repair();
+      const info = await this.refreshDeviceInfo(updater);
+      this.log(`\u2713 Device recovered: ${info.version}`, "success");
+    } catch (error) {
+      console.error("Recovery error:", error);
+      this.log(`Recovery failed: ${error.message}`, "error");
+      this.progress(0, "Recovery failed");
+    } finally {
+      const btn = this.el(this.buttons.recovery);
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = this.labels.recovery;
+      }
+      setTimeout(() => this.showProgress(false), 5e3);
+    }
+  }
+  // ---- reconnect modal: WebHID needs a user gesture to pair the re-enumerated device ----
+  showReconnectModal(message, kind = "usb") {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.className = "zknox-reconnect-overlay";
+      overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:9999;";
+      const modal = document.createElement("div");
+      modal.style.cssText = "background:#0a0a0f;border:1px solid rgba(167,139,250,0.3);border-radius:16px;padding:30px;text-align:center;max-width:420px;";
+      const title = document.createElement("h3");
+      title.style.cssText = "color:#fff;margin:0 0 15px 0;";
+      title.textContent = "\u{1F50C} Reconnect Device";
+      const text = document.createElement("p");
+      text.style.cssText = "color:#a78bfa;margin:0 0 20px 0;";
+      text.textContent = message;
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;gap:10px;justify-content:center;flex-wrap:wrap;";
+      const mkBtn = (label, request) => {
+        const btn = document.createElement("button");
+        btn.style.cssText = "background:#238636;color:#fff;border:none;padding:12px 24px;border-radius:6px;font-size:16px;cursor:pointer;";
+        btn.textContent = label;
+        btn.onclick = async () => {
+          for (const b of row.children) b.disabled = true;
+          btn.textContent = "Connecting...";
+          try {
+            const t = await request();
+            document.body.removeChild(overlay);
+            resolve(t);
+          } catch (e) {
+            for (const b of row.children) b.disabled = false;
+            btn.textContent = label;
+            text.textContent = `Connection failed: ${e.message}. ${message}`;
+          }
+        };
+        return btn;
+      };
+      const usb = mkBtn("\u{1F50C} Reconnect USB", () => TransportWebHID.request(true));
+      row.appendChild(usb);
+      if (TransportWebBLE.isSupported()) {
+        const ble = mkBtn("\u{1F4F6} Reconnect Bluetooth", () => TransportWebBLE.request(true));
+        if (kind === "ble") {
+          row.insertBefore(ble, usb);
+        } else {
+          row.appendChild(ble);
+        }
+      }
+      modal.append(title, text, row);
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+    });
+  }
+};
 export {
   BLE_MODELS,
   CURVES,
   DIR_ARTIFACT_FILES,
+  FIRMWARE_DEFAULTS,
+  FirmwareError,
+  FirmwareUi,
+  FirmwareUpdater,
   HexLoader,
   IntelHexParser,
   IntelHexPrinter,
@@ -3763,9 +4624,12 @@ export {
   deleteApp,
   describeApduScript,
   fetchCatalogApp,
+  findBestMCU,
   getDeployedSecretV1,
   getDeployedSecretV2,
   getDeviceInfo,
+  getDeviceModelName,
+  getFlashMcuOrBootloaderDetails,
   getMemInfo,
   hexToBytes2 as hexToBytes,
   listApps,
@@ -3773,6 +4637,7 @@ export {
   parseApduScript,
   parseArtifactManifest,
   parseBip32Path,
+  parseGetVersion,
   replayApduScript,
   resolveCatalogFiles,
   targetDir

@@ -9,3 +9,5 @@ export { parseApduScript, describeApduScript, replayApduScript } from './apduScr
 export { resolveCatalogFiles, fetchCatalogApp, parseArtifactManifest, targetDir, TARGET_DIRS, DIR_ARTIFACT_FILES } from './catalog.js';
 export { getDeviceInfo, TARGET_NAMES } from './device.js';
 export { TransportWebBLE, BLE_MODELS } from './transportBle.js';
+export { FirmwareUpdater, FirmwareError, FIRMWARE_DEFAULTS, parseGetVersion, findBestMCU, getFlashMcuOrBootloaderDetails, getDeviceModelName } from './firmwareUpdater.js';
+export { FirmwareUi } from './firmwareUi.js';

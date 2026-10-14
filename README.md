@@ -65,6 +65,17 @@ Bluetooth enabled, and the first connection pairs it (confirm on the device).
 const transport = await TransportWebBLE.request();
 ```
 
+## Firmware update
+
+Section "5. Firmware" of `sideloader.html`. **Check Firmware** asks Ledger's manager API for the
+next OS version and whether the MCU must be flashed; **Update Firmware** runs the same sequence as
+Ledger Live through Ledger's HSM (OSU, optional bootloader/MCU flashes, final firmware), over USB or
+Bluetooth. After each reboot the page reopens the device on the same link, or asks you to click
+**Reconnect** (WebHID / Web Bluetooth need a user gesture). **Bootloader Recovery** repairs a device
+stuck on "Bootloader" (plug it over USB holding the left button). Engine: `src/firmwareUpdater.js`
+(port of `@ledgerhq/live-common` `updateFirmwareTask` / `firmwareUpdate-repair`), UI glue:
+`src/firmwareUi.js`.
+
 ## ZKNOX Apps Catalog
 
 The catalog lets users install pre-built apps in one click. Clicking a card fetches all files, auto-detects parameters, and sideloads directly.

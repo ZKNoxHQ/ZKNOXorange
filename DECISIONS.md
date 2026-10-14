@@ -53,3 +53,14 @@
 - `appFlags` du catalogue ignoré pour ce layout (figé dans le createApp du script)
 - dépendance à raw.githubusercontent.com (CORS `*`, pas de SLA) ; le layout `dir` reste pour un miroir local
 - `ref: 'main'` n'est pas reproductible ; développement seulement
+
+## ADR-005: Firmware update dans Orange (2026-10-14)
+
+**Contexte** : la mise à jour de firmware sans Ledger Live avait été développée dans ZKNOX Blue (ADR-002/003 du dépôt ZKNOXblue). Elle est déplacée ici : Orange est l'outil développeur du site et a déjà le transport Bluetooth et le choix USB/Bluetooth, dont le firmware update a besoin pour les Nano X / Stax / Flex.
+
+**Décision** : `firmwareUpdater.js` et `firmwareUi.js` sont copiés tels quels, avec une seule adaptation, la reconnexion après reboot qui reste sur le lien d'origine (gatt.connect() sur le même `BluetoothDevice`, ou réouverture des HID appairés) avant de demander un geste utilisateur. Le HSM Ledger reste la seule source des blobs : l'hôte relaie des APDU. Jamais de `/update/mcu` avec la version lue sur le device ; la version vient du catalogue `mcu_versions` filtré par `final.mcu_versions` et `from_bootloader_version`.
+
+**Compromis** :
+- la réparation bootloader est USB (le chooser de la modale propose USB en premier) ; un Nano X bloqué en bootloader se répare par câble
+- testé sur matériel en USB (Nano S+, flux OSU → MCU, via Blue 1.1.x) ; le chemin Bluetooth n'a été validé qu'en boucle fermée
+- `transport.js` reçoit la gestion de déconnexion de Blue : les modules partagés entre les deux dépôts (transport, transportBle, hexParser, ledgerWrapper) se synchronisent par copie

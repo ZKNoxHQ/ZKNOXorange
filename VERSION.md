@@ -1,6 +1,14 @@
-# ZKNOX Orange v2.3.2
+# ZKNOX Orange v2.3.3
 
 ## Changelog
+
+### v2.3.3 - 2026-10-20
+
+- `apps/unchained/` : `app.hex`, `app.map`, `Makefile`, `manifest.json` supprimés, remplacés par un README ; la source est ZKNoxHQ/7702_Unchained `ledger/build/<target>/bin/app.apdu` (layout `repo`, `binDir: 'ledger/build/{target}/bin'`, pas de `artifact-manifest.txt`)
+- `README.md` : procédure de build et de commit des scripts pour un dépôt firmware sans pipeline ; le layout `dir` n'est plus utilisé par le catalogue
+- `DECISIONS.md` (ADR-004) : mis à jour
+- `package.json` : 2.3.3
+- Validé hors device : au ref `a01518f`, les scripts nanos2, nanox, stax, flex se résolvent via `resolveCatalogFiles` et se parsent, `appName=7702 Unchained`, API level 27
 
 ### v2.3.2 - 2026-10-20
 

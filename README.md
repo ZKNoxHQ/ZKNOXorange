@@ -46,11 +46,8 @@ breaks both the module import and the root-relative `/nav.js`.
 │   │   └── README.md        # app.apdu replayed from ZKNoxHQ/ZKNOX-HW-PRIVACY (layout `repo`)
 │   ├── ecmldsa/
 │   │   └── README.md        # app.apdu replayed from ZKNoxHQ/ecml-signer (layout `repo`, `binDir`)
-│   └── unchained/           # Local layout (`dir`)
-│       ├── app.hex          # Compiled application binary
-│       ├── app.map          # Linker map (dataSize, installParamsSize)
-│       ├── Makefile         # Build config (APPNAME, curves, paths)
-│       └── manifest.json    # SDK metadata (api_level)
+│   └── unchained/
+│       └── README.md        # app.apdu replayed from ZKNoxHQ/7702_Unchained (layout `repo`, `binDir`)
 └── package.json
 ```
 
@@ -119,6 +116,9 @@ const catalogApps = [
     // ecml-signer commits build/<target>/bin/app.apdu: no profile level, no manifest
     { id: 'ecmldsa', name: 'EC/ML-DSA', icon: '🔮', desc: 'Hybrid signatures',
       repo: 'ZKNoxHQ/ecml-signer', ref: 'a6e4ab665193b21933e289ac164fe9269d9fb22f', binDir: 'build/{target}/bin' },
+    // 7702_Unchained: same, under the ledger/ subdirectory
+    { id: 'unchained', name: '7702 Unchained', icon: '🔓', desc: 'EIP-7702 delegation',
+      repo: 'ZKNoxHQ/7702_Unchained', ref: 'a01518ffce0d24842985ce10b628a6bf1cbd10c9', binDir: 'ledger/build/{target}/bin' },
 ];
 ```
 
@@ -142,13 +142,36 @@ Fields:
 - `ref` — branch, tag or commit SHA; pin a SHA for anything served to users
 - `profile` — `prod` (default) or `dev`; a `dev` build is refused unless the entry says so
 - `binDir` — optional, default `build/{profile}/{target}`; set it for a
-  repository with another layout (ecml-signer: `build/{target}/bin`)
+  repository with another layout (ecml-signer: `build/{target}/bin`,
+  7702_Unchained: `ledger/build/{target}/bin`)
 
 `fetchCatalogApp` also returns the parsed `artifact-manifest.txt` (`mode`,
 `frost`, `commit`, `elf_sha256`) when the repository ships one. Without it
-(ecml-signer) `manifest` is `null` and no prod/debug check is made.
+(ecml-signer, 7702_Unchained) `manifest` is `null` and no prod/debug check is
+made.
+
+The scripts carry the SDK API level in their create-app command: a device whose
+OS is on an older API level refuses the install until its firmware is updated.
+
+#### Building and committing the scripts (repositories without their own pipeline)
+
+`build/` is gitignored in the Ledger app template, so the scripts are
+force-added. From the repository root (the SDK refuses to build outside a git
+repo), with the app directory as working directory:
+
+```bash
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$(realpath .):/app" -w /app/<app dir> \
+  ghcr.io/ledgerhq/ledger-app-builder/ledger-app-dev-tools:latest bash -c '
+  git config --global --add safe.directory "*"
+  make BOLOS_SDK=$NANOSP_SDK clean     # wipes every target: clean once, not per target
+  for sdk in NANOSP_SDK NANOX_SDK STAX_SDK FLEX_SDK APEX_P_SDK; do make -j8 BOLOS_SDK=${!sdk}; done'
+git add -f <app dir>/build/*/bin/app.apdu <app dir>/build/*/bin/app.elf
+```
 
 #### Layout `dir` (artifacts committed next to the sideloader)
+
+No catalog app uses this layout anymore; it stays supported for a local mirror
+or an app without an offline load script.
 
 ##### 1. Create the app directory
 

@@ -1,6 +1,13 @@
-# ZKNOX Orange v2.3.1
+# ZKNOX Orange v2.3.2
 
 ## Changelog
+
+### v2.3.2 - 2026-10-20
+
+- `apps/ecmldsa/` : `app.hex`, `app.map`, `Makefile`, `manifest.json` supprimés, remplacés par un README ; la source est ZKNoxHQ/ecml-signer `build/<target>/bin/app.apdu` (layout `repo`, `binDir: 'build/{target}/bin'`, pas de `artifact-manifest.txt`)
+- `README.md`, `DECISIONS.md` (ADR-004) : mis à jour
+- `package.json` : 2.3.2
+- Validé hors device : au ref `a6e4ab6`, les scripts nanos2, nanox, stax, flex se résolvent via `resolveCatalogFiles` et se parsent, `appName=ECML-Signer`
 
 ### v2.3.1 - 2026-10-14
 

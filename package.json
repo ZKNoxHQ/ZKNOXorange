@@ -1,6 +1,6 @@
 {
   "name": "zknox-orange",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "description": "ZKNOX Orange - Ledger Sideloader (Web Crypto API)",
   "type": "module",
   "scripts": {

@@ -44,7 +44,9 @@ breaks both the module import and the root-relative `/nav.js`.
 ├── apps/                    # ZKNOX Apps Catalog
 │   ├── privacy/
 │   │   └── README.md        # app.apdu replayed from ZKNoxHQ/ZKNOX-HW-PRIVACY (layout `repo`)
-│   └── ecmldsa/             # Local layout (`dir`)
+│   ├── ecmldsa/
+│   │   └── README.md        # app.apdu replayed from ZKNoxHQ/ecml-signer (layout `repo`, `binDir`)
+│   └── unchained/           # Local layout (`dir`)
 │       ├── app.hex          # Compiled application binary
 │       ├── app.map          # Linker map (dataSize, installParamsSize)
 │       ├── Makefile         # Build config (APPNAME, curves, paths)
@@ -114,6 +116,9 @@ const catalogApps = [
     // ... existing apps ...
     { id: 'privacy', name: 'ZKNOX Privacy', icon: '🛡️', desc: 'EdDSA-Poseidon + FROST',
       repo: 'ZKNoxHQ/ZKNOX-HW-PRIVACY', ref: 'e3fd460bdaaa8f3b87c1f111b9eb9b94de88eabb', profile: 'prod' },
+    // ecml-signer commits build/<target>/bin/app.apdu: no profile level, no manifest
+    { id: 'ecmldsa', name: 'EC/ML-DSA', icon: '🔮', desc: 'Hybrid signatures',
+      repo: 'ZKNoxHQ/ecml-signer', ref: 'a6e4ab665193b21933e289ac164fe9269d9fb22f', binDir: 'build/{target}/bin' },
 ];
 ```
 
@@ -136,10 +141,12 @@ Fields:
 - `repo` — `owner/name` on GitHub
 - `ref` — branch, tag or commit SHA; pin a SHA for anything served to users
 - `profile` — `prod` (default) or `dev`; a `dev` build is refused unless the entry says so
-- `binDir` — optional, default `build/{profile}/{target}`
+- `binDir` — optional, default `build/{profile}/{target}`; set it for a
+  repository with another layout (ecml-signer: `build/{target}/bin`)
 
 `fetchCatalogApp` also returns the parsed `artifact-manifest.txt` (`mode`,
-`frost`, `commit`, `elf_sha256`) when the repository ships one.
+`frost`, `commit`, `elf_sha256`) when the repository ships one. Without it
+(ecml-signer) `manifest` is `null` and no prod/debug check is made.
 
 #### Layout `dir` (artifacts committed next to the sideloader)
 

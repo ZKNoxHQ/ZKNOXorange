@@ -54,6 +54,8 @@
 - dépendance à raw.githubusercontent.com (CORS `*`, pas de SLA) ; le layout `dir` reste pour un miroir local
 - `ref: 'main'` n'est pas reproductible ; développement seulement
 
+**Mise à jour (2026-10-20)** : `apps/ecmldsa/` passe aussi au layout `repo`, source ZKNoxHQ/ecml-signer (dépôt rendu public pour que raw.githubusercontent.com serve les fichiers). Son arborescence diffère de ZKNOX-HW-PRIVACY : `build/<target>/bin/app.apdu`, sans niveau `<profile>` ni `artifact-manifest.txt`. L'entrée fixe `binDir: 'build/{target}/bin'` plutôt que d'ajouter un second layout au code ; le contrôle prod/debug ne s'applique pas (manifest absent).
+
 ## ADR-005: Firmware update dans Orange (2026-10-14)
 
 **Contexte** : la mise à jour de firmware sans Ledger Live avait été développée dans ZKNOX Blue (ADR-002/003 du dépôt ZKNOXblue). Elle est déplacée ici : Orange est l'outil développeur du site et a déjà le transport Bluetooth et le choix USB/Bluetooth, dont le firmware update a besoin pour les Nano X / Stax / Flex.
